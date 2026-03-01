@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>OpenLum.Console</RootNamespace>
+    <AssemblyName>openlum-console</AssemblyName>
+
+    <!-- Native AOT 发布：需配合 dotnet publish -r win-x64 -->
+    <PublishAot>true</PublishAot>
+
+    <!-- Fallback: use net9.0 if net10.0 SDK not installed -->
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 使用 None 而非 Content，确保 .exe/.dll 等所有文件均被复制（Content 可能排除 exe/dll） -->
+    <None Include="Skills\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="openlum.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- 发布后显式复制 Skills 下所有文件（含 exe/dll），因 SDK 默认会排除这些类型 -->
+  <Target Name="CopySkillsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_SkillsFiles Include="$(ProjectDir)Skills\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SkillsFiles)"
+          DestinationFiles="@(_SkillsFiles->'$(PublishDir)Skills\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

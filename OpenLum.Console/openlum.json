@@ -1,0 +1,25 @@
+{
+  "tools": {
+    "profile": "local",
+    "allow": [],
+    "deny": []
+  },
+  "model_backup": {
+    "provider": "Ollama",
+    "model": "qwen3:8b",
+    "baseUrl": "http://10.10.117.222:11434/v1",
+    "apiKey": "xxxx"
+  },
+  "model": {
+    "provider": "DeepSeek",
+    "model": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": "xxxx"
+  },
+  "compaction": {
+    "enabled": true,
+    "maxMessagesBeforeCompact": 30,
+    "reserveRecent": 10
+  },
+  "workspace": "."
+}
