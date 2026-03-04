@@ -1,0 +1,36 @@
+{
+  "tools": {
+    "profile": "local",
+    "allow": [],
+    "deny": []
+  },
+  "modelx": {
+    "provider": "Ollama",
+    "model": "qwen3.5:9B",
+    "baseUrl": "http://10.10.117.222:11434/v1",
+    "apiKey": "xxxx",
+    "noThinking": true
+  },
+  "model3": {
+    "provider": "DeepSeek",
+    "model": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": "xxxx"
+  },
+  "model": {
+    "provider": "DeepSeek",
+    "model": "deepseek-chat",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "apiKey": ""
+  },
+  "compaction": {
+    "enabled": true,
+    "maxMessagesBeforeCompact": 30,
+    "reserveRecent": 10
+  },
+  "agent": {
+    "maxToolTurns": 100,
+    "turnLimitStrategy": "model_decide"
+  },
+  "workspace": "."
+}
