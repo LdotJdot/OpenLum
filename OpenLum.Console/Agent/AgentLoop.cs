@@ -112,7 +112,10 @@ public sealed class AgentLoop : IAgent
         IProgress<string>? contentProgress,
         CancellationToken ct)
     {
-        _session.AddAssistant(lastResponse.Content, lastResponse.ToolCalls);
+        // IMPORTANT: 不要把带有 tool_calls 但尚未执行的 assistant 消息写回到会话里。
+        // OpenAI 要求：一旦历史中出现带 tool_calls 的 assistant 消息，下一条必须是对应的 tool 消息。
+        // 这里我们只是让模型做“决策”，不会真正执行这些 tool_calls，所以必须丢弃它们，只保留文字内容。
+        _session.AddAssistant(lastResponse.Content, null);
         _session.Add(new ChatMessage
         {
             Role = MessageRole.User,

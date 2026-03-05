@@ -9,6 +9,8 @@ namespace OpenLum.Console.Tools;
 /// </summary>
 public sealed class SessionsSpawnTool : ITool
 {
+    private static readonly object ConsoleLock = new();
+
     private readonly IModelProvider _model;
     private readonly IToolRegistry _parentTools;
     private readonly string _workspaceDir;
@@ -43,11 +45,55 @@ public sealed class SessionsSpawnTool : ITool
         if (string.IsNullOrWhiteSpace(task))
             return "Error: task is required.";
 
+        var label = args.GetValueOrDefault("label")?.ToString();
+        var subagentLabel = string.IsNullOrWhiteSpace(label) ? "sub-agent" : $"sub-agent:{label}";
+
         var subTools = CreateSubagentToolRegistry();
         var subSession = new ConsoleSession();
-        var subAgent = new AgentLoop(_model, subTools, subSession, _systemPrompt, compactor: null);
+        var subAgent = new AgentLoop(
+            _model,
+            subTools,
+            subSession,
+            _systemPrompt,
+            compactor: null,
+            onToolExecuting: (name, arguments) =>
+            {
+                lock (ConsoleLock)
+                {
+                    var prev = System.Console.ForegroundColor;
+                    System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+                    System.Console.WriteLine($"    [{subagentLabel}] → {name}({arguments})");
+                    System.Console.ForegroundColor = prev;
+                }
+            });
 
-        var result = await subAgent.RunAsync(task, null, ct);
+        var startedStreaming = false;
+        var progress = new Progress<string>(chunk =>
+        {
+            lock (ConsoleLock)
+            {
+                if (!startedStreaming)
+                {
+                    startedStreaming = true;
+                    System.Console.WriteLine();
+                    var prev = System.Console.ForegroundColor;
+                    System.Console.ForegroundColor = System.ConsoleColor.Cyan;
+                    System.Console.Write($"[{subagentLabel}] ");
+                    System.Console.ForegroundColor = prev;
+                }
+                System.Console.Write(chunk);
+            }
+        });
+
+        var result = await subAgent.RunAsync(task, progress, ct);
+        if (startedStreaming)
+        {
+            lock (ConsoleLock)
+            {
+                System.Console.WriteLine();
+            }
+        }
+
         if (!result.Success)
             return $"Sub-agent failed: {result.ErrorMessage ?? "unknown"}";
 
