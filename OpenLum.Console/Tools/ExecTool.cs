@@ -19,7 +19,7 @@ public sealed class ExecTool : ITool
     }
 
     public string Name => "exec";
-    public string Description => "Run a PowerShell command. Working directory is workspace. Use PowerShell syntax only: chain with ; (not &&), use & \"path\" for paths with spaces. Do NOT use cmd /c or bash-style.";
+    public string Description => "Run a PowerShell command. Working directory is workspace. Prefer absolute paths for any exec path or working directory; workspace-relative paths are also accepted. Use PowerShell syntax only: chain with ; (not &&), use & \"path\" for paths with spaces. Do NOT use cmd /c or bash-style.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("command", "string", "PowerShell command. Use ; to chain (never &&). Example: cd \"path\"; dotnet build", true),

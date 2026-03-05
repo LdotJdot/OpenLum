@@ -45,7 +45,7 @@ public static class SystemPromptBuilder
 
         lines.Add("## Workspace");
         lines.Add($"Workspace: {workspaceDir}");
-        lines.Add("Path parameters accept workspace-relative or absolute paths where supported.");
+        lines.Add("For any file or directory path parameters: prefer absolute paths for clarity and safety; workspace-relative paths are also accepted where supported.");
         lines.Add("");
 
         if (skillsSection.Count > 0)

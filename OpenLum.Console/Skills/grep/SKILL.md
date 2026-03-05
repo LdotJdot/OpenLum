@@ -65,43 +65,56 @@ rg [OPTIONS] PATTERN [PATH ...]
 | `--stats` | 输出统计 |
 | `--type-list` | 列出支持的文件类型 |
 
-## 使用示例
+## 使用示例（包含多模式 OR 搜索）
 
 ```bash
 # 在 workspace 搜索 "TODO"
-exec: grep/rg.exe "TODO" .
+exec: Skills/grep/rg.exe "TODO" .
 
 # 在指定目录搜索，显示行号
-exec: grep/rg.exe -n "function" src/
+exec: Skills/grep/rg.exe -n "function" src/
 
 # 忽略大小写、显示前后 2 行
-exec: grep/rg.exe -i -C 2 "error" logs/
+exec: Skills/grep/rg.exe -i -C 2 "error" logs/
 
 # 仅搜索 .cs 文件
-exec: grep/rg.exe -t cs "class"
+exec: Skills/grep/rg.exe -t cs "class"
 
 # 仅输出含匹配的文件名
-exec: grep/rg.exe -l "deprecated"
+exec: Skills/grep/rg.exe -l "deprecated"
 
 # 字面字符串（非正则）
-exec: grep/rg.exe -F "exact.string"
+exec: Skills/grep/rg.exe -F "exact.string"
 
 # 限制深度、关闭颜色
-exec: grep/rg.exe -d 2 --color=never "pattern" folder/
+exec: Skills/grep/rg.exe -d 2 --color=never "pattern" folder/
+
+# 多关键字 OR 搜索（推荐：正则分组）
+# 匹配包含 "io" 或 "path" 或 "xxx" 的行
+exec: Skills/grep/rg.exe -n "(io|path|xxx)" .
+
+# 多关键字 OR 搜索（等价写法：多次 -e）
+exec: Skills/grep/rg.exe -n -e "io" -e "path" -e "xxx" .
 ```
 
-## Agent 调用方式
+## Agent 调用方式（优先绝对路径 + 多模式）
 
-从 workspace 根目录执行：
-
-```
-exec: Skills/grep/rg.exe -n "关键词" .
-```
-
-或使用 workspace 下的相对路径调用：
+- **优先使用绝对路径调用本 skill 的 exe**，例如：
 
 ```
-exec: grep/rg.exe "pattern" path/to/dir
+exec: d:/Data/个人/FAV/MyCoreProj/Projects/OpenLumSharp/OpenLum.Console/Skills/grep/rg.exe -n "(io|path|xxx)" d:/Data/个人/FAV/MyCoreProj/Projects/OpenLumSharp
+```
+
+- 也可以从 workspace 根目录使用以 `Skills/` 开头的路径（推荐于相对路径）：
+
+```
+exec: Skills/grep/rg.exe -n "(io|path|xxx)" .
+```
+
+- 仅在路径较短且上下文已明确 workspace 根目录时，才使用工作区相对路径：
+
+```
+exec: grep/rg.exe -n -e "io" -e "path" -e "xxx" src/
 ```
 
 输出到 stdout，Agent 可解析结果。

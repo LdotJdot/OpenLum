@@ -15,10 +15,10 @@ public sealed class ListDirTool : ITool
     }
 
     public string Name => "list_dir";
-    public string Description => "PowerShell-style: like Get-ChildItem. List files and subdirectories. Path: workspace-relative or absolute.";
+    public string Description => "PowerShell-style: like Get-ChildItem. List files and subdirectories. Prefer absolute paths for directory arguments; workspace-relative paths are also accepted.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
-        new ToolParameter("path", "string", "Path (default: .). Like Get-ChildItem -Path.", false)
+        new ToolParameter("path", "string", "Directory path (default: .). Prefer absolute paths; workspace-relative is also supported. Like Get-ChildItem -Path.", false)
     ];
 
     public Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
