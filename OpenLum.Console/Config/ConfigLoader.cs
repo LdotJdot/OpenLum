@@ -39,13 +39,36 @@ public static class ConfigLoader
                     UserTimezone = root.TryGetProperty("userTimezone", out var tz) ? tz.GetString()?.Trim() : null
                 };
             }
-            catch
+            catch (Exception ex)
             {
-                // Fall through to defaults
+                var message = $"[Config] Failed to load '{path}': {ex.GetType().Name}: {ex.Message}";
+                try
+                {
+                    System.Console.Error.WriteLine(message);
+                }
+                catch
+                {
+                    // ignore console failures (non-console hosts)
+                }
+
+                if (IsStrictConfig())
+                {
+                    throw new InvalidOperationException(message, ex);
+                }
             }
         }
 
         return new AppConfig();
+    }
+
+    private static bool IsStrictConfig()
+    {
+        var value = Environment.GetEnvironmentVariable("OPENLUM_STRICT_CONFIG");
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private static ToolPolicyConfig ParseToolPolicy(JsonElement el)
@@ -63,16 +86,32 @@ public static class ConfigLoader
 
     private static ModelConfig ParseModel(JsonElement el)
     {
-        if (el.ValueKind != JsonValueKind.Object)
-            return new ModelConfig();
+        var config = new ModelConfig();
+        if (el.ValueKind == JsonValueKind.Object)
+        {
+            config = new ModelConfig
+            {
+                Provider = el.TryGetProperty("provider", out var p) ? p.GetString() ?? "openai" : "openai",
+                Model = el.TryGetProperty("model", out var m) ? m.GetString() ?? "gpt-4o-mini" : "gpt-4o-mini",
+                BaseUrl = el.TryGetProperty("baseUrl", out var u) ? u.GetString() : null,
+                ApiKey = el.TryGetProperty("apiKey", out var k) ? k.GetString() : null,
+                NoThinking = el.TryGetProperty("noThinking", out var nt) ? nt.GetBoolean() : false
+            };
+        }
+
+        // Environment variables override JSON config where present.
+        var providerEnv = Environment.GetEnvironmentVariable("OPENLUM_PROVIDER");
+        var modelEnv = Environment.GetEnvironmentVariable("OPENLUM_MODEL");
+        var baseUrlEnv = Environment.GetEnvironmentVariable("OPENLUM_BASE_URL");
+        var apiKeyEnv = Environment.GetEnvironmentVariable("OPENLUM_API_KEY");
 
         return new ModelConfig
         {
-            Provider = el.TryGetProperty("provider", out var p) ? p.GetString() ?? "openai" : "openai",
-            Model = el.TryGetProperty("model", out var m) ? m.GetString() ?? "gpt-4o-mini" : "gpt-4o-mini",
-            BaseUrl = el.TryGetProperty("baseUrl", out var u) ? u.GetString() : null,
-            ApiKey = el.TryGetProperty("apiKey", out var k) ? k.GetString() : null,
-            NoThinking = el.TryGetProperty("noThinking", out var nt) ? nt.GetBoolean() : false
+            Provider = !string.IsNullOrWhiteSpace(providerEnv) ? providerEnv : config.Provider,
+            Model = !string.IsNullOrWhiteSpace(modelEnv) ? modelEnv : config.Model,
+            BaseUrl = !string.IsNullOrWhiteSpace(baseUrlEnv) ? baseUrlEnv : config.BaseUrl,
+            ApiKey = !string.IsNullOrWhiteSpace(apiKeyEnv) ? apiKeyEnv : config.ApiKey,
+            NoThinking = config.NoThinking
         };
     }
 

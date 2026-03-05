@@ -23,6 +23,9 @@ public static class SkillLoader
             Path.Combine(Path.GetDirectoryName(AppContext.BaseDirectory) ?? ".", "skills")
         };
 
+        // Use effective skill name (frontmatter name if present, otherwise folder name)
+        // as the unique key, and define a clear precedence:
+        //   workspace/skills  >  AppContext.BaseDirectory/skills  >  parent-of-AppContext/skills
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var dir in dirs)
         {
@@ -35,12 +38,15 @@ public static class SkillLoader
                 if (!File.Exists(skillPath))
                     continue;
 
-                var name = Path.GetFileName(sub);
-                if (seen.Contains(name))
+                var (desc, parsedName) = ParseFrontmatter(skillPath);
+                var folderName = Path.GetFileName(sub);
+                var skillName = !string.IsNullOrWhiteSpace(parsedName) ? parsedName : folderName;
+
+                // If a skill with the same effective name has already been loaded from a
+                // higher‑priority root, skip this one.
+                if (seen.Contains(skillName))
                     continue;
 
-                var (desc, parsedName) = ParseFrontmatter(skillPath);
-                var skillName = !string.IsNullOrWhiteSpace(parsedName) ? parsedName : name;
                 seen.Add(skillName);
                 results.Add(new SkillEntry(skillName, desc, skillPath));
 

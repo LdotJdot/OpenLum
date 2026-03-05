@@ -74,6 +74,7 @@ public sealed class AgentLoop : IAgent
             }
             catch (Exception ex)
             {
+                System.Console.Error.WriteLine($"[Agent] Model error: {ex.GetType().Name}: {ex.Message}");
                 return new AgentTurnResult(false, ex.Message);
             }
 
@@ -264,6 +265,7 @@ public sealed class AgentLoop : IAgent
         }
         catch (Exception ex)
         {
+            System.Console.Error.WriteLine($"[Tool] {tc.Name} error: {ex.GetType().Name}: {ex.Message}");
             return new ToolResult
             {
                 ToolCallId = tc.Id,

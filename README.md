@@ -77,13 +77,74 @@ Config is loaded from (in order): `openlum.json` → `openlum.console.json` → 
 | `model.model` | Model identifier |
 | `model.baseUrl` | API base URL |
 | `model.apiKey` | API key |
-| `model_backup` | Fallback model when primary fails |
+| `model_backup` | Fallback model when primary fails (not yet wired) |
 | `workspace` | Workspace root for tools |
 | `compaction.enabled` | Enable session compaction |
 | `compaction.maxMessagesBeforeCompact` | Messages before compacting |
 | `compaction.reserveRecent` | Recent messages to keep |
-| `tools.profile` | Tool policy profile (`local`, etc.) |
-| `tools.allow` / `tools.deny` | Tool allow/deny lists |
+| `tools.profile` | Tool policy profile (`minimal`, `coding`, `messaging`, `local`, `full`) |
+| `tools.allow` / `tools.deny` | Tool allow/deny lists (tool or group names) |
+
+#### Tool profiles and example configs
+
+Built‑in profiles are defined in `ToolProfiles`:
+
+| Profile | Base tools (before allow/deny) | Typical use |
+|---------|--------------------------------|-------------|
+| `minimal` | `list_dir` only | Very safe, read‑only exploration (you can still add tools via `allow`) |
+| `coding` | `group:fs`, `group:web`, `group:runtime` | Local development: filesystem + browser + `exec`, no memory/sessions |
+| `messaging` | `list_dir` only | For chat/messaging shells that rarely need tools |
+| `local` | `group:fs`, `group:web`, `group:runtime`, `group:memory`, `group:sessions` | Full local work: coding + memory + sub‑sessions |
+| `full` | same as `local` | Alias for “everything enabled” |
+
+You can refine a profile with `allow` / `deny`. Some useful recipes:
+
+- **Safe coding (no exec, no browser, read‑heavy)** — start from `minimal`, then allow just what you need:
+
+  ```json
+  {
+    "tools": {
+      "profile": "minimal",
+      "allow": [ "read", "group:memory" ],
+      "deny": []
+    }
+  }
+  ```
+
+- **Local development (default for most cases)** — use `local` with no overrides:
+
+  ```json
+  {
+    "tools": {
+      "profile": "local",
+      "allow": [],
+      "deny": []
+    }
+  }
+  ```
+
+- **Paranoid mode (disable all tools)** — use `deny: ["*"]`:
+
+  ```json
+  {
+    "tools": {
+      "profile": "local",
+      "allow": [],
+      "deny": [ "*" ]
+    }
+  }
+  ```
+
+  With this config the agent can still chat, but all tools are disabled regardless of the profile.
+
+Model config also supports environment‑variable overrides:
+
+- `OPENLUM_PROVIDER`, `OPENLUM_MODEL`, `OPENLUM_BASE_URL`, `OPENLUM_API_KEY`
+- Precedence: **environment variable → JSON → hardcoded defaults**.
+
+Config loading behavior can be made strict by setting:
+
+- `OPENLUM_STRICT_CONFIG=1` (or `true` / `yes`) — any parse error in `openlum.json` / `openlum.console.json` / `appsettings.json` will cause startup to fail with a clear error message instead of silently falling back to defaults.
 
 ### Comparison with OpenClaw
 
@@ -175,14 +236,75 @@ MIT License. See [LICENSE.txt](LICENSE.txt) for details.
 | `model.provider` | 提供者名称（如 OpenAI、DeepSeek、Ollama） |
 | `model.model` | 模型标识 |
 | `model.baseUrl` | API 基础地址 |
-| `model.apiKey` | API 密钥 |
-| `model_backup` | 主模型失败时的备用模型 |
+| `model.apiKey` | API 密钥（推荐通过环境变量 `OPENLUM_API_KEY` 配置） |
+| `model_backup` | 主模型失败时的备用模型（暂未在代码中使用） |
 | `workspace` | 工具工作区根目录 |
 | `compaction.enabled` | 是否启用会话压缩 |
 | `compaction.maxMessagesBeforeCompact` | 压缩前的消息数量 |
 | `compaction.reserveRecent` | 压缩后保留的最近消息数 |
-| `tools.profile` | 工具策略（如 `local`） |
-| `tools.allow` / `tools.deny` | 工具白名单 / 黑名单 |
+| `tools.profile` | 工具策略（`minimal` / `coding` / `messaging` / `local` / `full`） |
+| `tools.allow` / `tools.deny` | 工具白名单 / 黑名单（可以是具体工具名或组名） |
+
+#### 工具 Profile 与推荐配置示例
+
+内置 profile 在 `ToolProfiles` 中定义：
+
+| Profile | 默认工具（未应用 allow/deny 前） | 场景 |
+|---------|----------------------------------|------|
+| `minimal` | 仅 `list_dir` | 极度安全，只读浏览目录（可以用 `allow` 再加工具） |
+| `coding` | `group:fs`, `group:web`, `group:runtime` | 本地开发：文件 + 浏览器 + `exec`，不含 memory/sessions |
+| `messaging` | 仅 `list_dir` | 以聊天为主、几乎不用工具的场景 |
+| `local` | `group:fs`, `group:web`, `group:runtime`, `group:memory`, `group:sessions` | 本地日常开发：包含内存与子智能体 |
+| `full` | 同 `local` | “全开”别名 |
+
+可以通过 `allow` / `deny` 在 profile 基础上做精细控制。一些常用组合：
+
+- **安全 coding（无 exec / 无浏览器，偏只读）** — 基于 `minimal`，只放开读和记忆：
+
+  ```json
+  {
+    "tools": {
+      "profile": "minimal",
+      "allow": [ "read", "group:memory" ],
+      "deny": []
+    }
+  }
+  ```
+
+- **本地开发（推荐默认）** — 直接使用 `local`，不过度限制：
+
+  ```json
+  {
+    "tools": {
+      "profile": "local",
+      "allow": [],
+      "deny": []
+    }
+  }
+  ```
+
+- **全禁（只聊天，不用任何工具）** — 利用 `deny: ["*"]`：
+
+  ```json
+  {
+    "tools": {
+      "profile": "local",
+      "allow": [],
+      "deny": [ "*" ]
+    }
+  }
+  ```
+
+  这时 Agent 仍可对话，但所有工具都会被策略层禁止。
+
+模型配置支持通过环境变量覆写 JSON 中的设置：
+
+- `OPENLUM_PROVIDER`、`OPENLUM_MODEL`、`OPENLUM_BASE_URL`、`OPENLUM_API_KEY`
+- 优先级：**环境变量 > JSON 配置 > 代码默认值**。
+
+同时，加载配置时可以开启严格模式，避免静默忽略异常：
+
+- 设置 `OPENLUM_STRICT_CONFIG=1`（或 `true` / `yes`）后，若 `openlum.json` / `openlum.console.json` / `appsettings.json` 解析失败，会在启动时报错并退出，而不是静默使用默认配置。
 
 ### 与 OpenClaw 的对比
 

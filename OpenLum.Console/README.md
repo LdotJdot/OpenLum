@@ -524,7 +524,7 @@ stdout 为 JSON：`{"city":"北京","temp":15,"desc":"晴"}`
 配置文件按优先级查找：`openlum.json` > `openlum.console.json` > `appsettings.json`。  
 放在可执行文件同目录即可。
 
-示例 `openlum.json`：
+示例 `openlum.json`（本地开发推荐）：
 
 ```json
 {
@@ -545,21 +545,49 @@ stdout 为 JSON：`{"city":"北京","temp":15,"desc":"晴"}`
 }
 ```
 
+其他常见配置模板：
+
+- **安全 coding（无 exec / 无浏览器，偏只读）**：
+
+  ```json
+  {
+    "tools": {
+      "profile": "minimal",
+      "allow": [ "read", "group:memory" ],
+      "deny": []
+    }
+  }
+  ```
+
+- **全禁工具（只聊天，不调用任何工具）**：
+
+  ```json
+  {
+    "tools": {
+      "profile": "local",
+      "allow": [],
+      "deny": [ "*" ]
+    }
+  }
+  ```
+
 ### 5.2 配置项说明
 
 | 配置块 | 字段 | 说明 |
 |--------|------|------|
 | `tools` | `profile` | minimal / coding / messaging / local / full |
 | `tools` | `allow` / `deny` | 工具名或组名列表 |
-| `model` | `provider` | 仅作标识，实际请求由 `baseUrl` 决定 |
-| `model` | `model` | 模型名，如 `deepseek-chat`、`qwen3:8b` |
-| `model` | `baseUrl` | API 地址，如 Ollama `http://localhost:11434/v1` |
-| `model` | `apiKey` | 密钥（当前不从环境变量读取） |
+| `model` | `provider` | 仅作标识，实际请求由 `baseUrl` 决定，可被 `OPENLUM_PROVIDER` 覆写 |
+| `model` | `model` | 模型名，如 `deepseek-chat`、`qwen3:8b`，可被 `OPENLUM_MODEL` 覆写 |
+| `model` | `baseUrl` | API 地址，如 Ollama `http://localhost:11434/v1`，可被 `OPENLUM_BASE_URL` 覆写 |
+| `model` | `apiKey` | 密钥，推荐通过环境变量 `OPENLUM_API_KEY` 提供 |
 | `compaction` | `enabled` | 是否启用会话压缩 |
 | `compaction` | `maxMessagesBeforeCompact` | 超过此条数触发压缩 |
 | `compaction` | `reserveRecent` | 压缩后保留最近 N 条 |
 | `workspace` | - | 工作区根目录，支持环境变量展开 |
 | `userTimezone` | - | 时间戳时区，如 `Asia/Shanghai` |
+
+> 高级：将环境变量 `OPENLUM_STRICT_CONFIG` 设为 `1` / `true` / `yes` 时，若配置文件 JSON 格式错误，会在启动时报错退出，而不是静默回退到默认配置。
 
 ### 5.3 构建与运行
 

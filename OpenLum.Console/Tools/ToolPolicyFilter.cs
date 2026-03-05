@@ -11,6 +11,7 @@ public sealed class ToolPolicyFilter : IToolRegistry
     private readonly IToolRegistry _inner;
     private readonly HashSet<string> _allowed;
     private readonly HashSet<string> _denied;
+    private readonly bool _denyAll;
 
     public ToolPolicyFilter(IToolRegistry inner, ToolPolicyConfig policy)
     {
@@ -34,14 +35,22 @@ public sealed class ToolPolicyFilter : IToolRegistry
         }
 
         _denied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var denyAll = false;
         foreach (var d in fromDeny)
         {
             if (d == "*")
             {
-                _allowed.Clear();
-                break;
+                denyAll = true;
+                continue;
             }
             _denied.Add(d);
+        }
+
+        _denyAll = denyAll;
+        if (_denyAll)
+        {
+            // When deny-all is requested, ignore any allow list for safety.
+            _allowed.Clear();
         }
     }
 
@@ -50,7 +59,7 @@ public sealed class ToolPolicyFilter : IToolRegistry
         get
         {
             var list = _inner.All;
-            if (_denied.Contains("*"))
+            if (_denyAll)
                 return [];
             return list.Where(t => IsAllowed(t.Name)).ToList();
         }
@@ -65,6 +74,9 @@ public sealed class ToolPolicyFilter : IToolRegistry
 
     private bool IsAllowed(string name)
     {
+        if (_denyAll)
+            return false;
+
         var n = ToolProfiles.Normalize(name);
         if (_denied.Contains(n))
             return false;

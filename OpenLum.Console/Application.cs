@@ -13,8 +13,13 @@ public sealed class Application
 {
     private static readonly object ConsoleLock = new();
 
-    public static int Run()
+    public static int Run(string[]? args = null)
     {
+        if (args is { Length: > 0 } && args.Contains("--config-doctor", StringComparer.OrdinalIgnoreCase))
+        {
+            return RunConfigDoctor();
+        }
+
         var config = ConfigLoader.Load();
         var workspaceDir = ResolveWorkspace(config.Workspace);
         Directory.CreateDirectory(workspaceDir);
@@ -88,6 +93,25 @@ public sealed class Application
         System.Console.WriteLine();
 
         return RunRepl(agent, session, workspaceDir, config.UserTimezone);
+    }
+
+    private static int RunConfigDoctor()
+    {
+        System.Console.WriteLine("== OpenLum Config Doctor ==");
+        var config = ConfigLoader.Load();
+        System.Console.WriteLine($"Profile   : {config.ToolPolicy.Profile}");
+        System.Console.WriteLine($"Workspace : {ResolveWorkspace(config.Workspace)}");
+        System.Console.WriteLine($"Model     : provider={config.Model.Provider}, model={config.Model.Model}, baseUrl={config.Model.BaseUrl ?? "(default)"}");
+
+        var skills = SkillLoader.Load(ResolveWorkspace(config.Workspace ?? "."));
+        System.Console.WriteLine();
+        System.Console.WriteLine($"Skills ({skills.Count}):");
+        foreach (var s in skills)
+        {
+            System.Console.WriteLine($"  - {s.Name} @ {s.Location}");
+        }
+
+        return 0;
     }
 
     private static int RunRepl(

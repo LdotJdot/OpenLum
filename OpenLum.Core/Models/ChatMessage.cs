@@ -46,3 +46,4 @@ public sealed class ToolResult
     public required string Content { get; init; }
     public bool IsError { get; init; }
 }
+

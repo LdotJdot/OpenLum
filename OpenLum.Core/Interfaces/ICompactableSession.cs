@@ -11,3 +11,4 @@ public interface ICompactableSession : ISession
     IReadOnlyList<ChatMessage> GetMessagesToCompact(int reserveRecent);
     void CompactWithSummary(int reserveRecent, string summary);
 }
+

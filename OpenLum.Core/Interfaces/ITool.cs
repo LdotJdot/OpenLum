@@ -25,3 +25,4 @@ public interface ITool
     IReadOnlyList<ToolParameter> Parameters { get; }
     Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default);
 }
+

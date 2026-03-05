@@ -13,3 +13,4 @@ public interface ISession
     void AddToolResults(IReadOnlyList<ToolResult> results);
     void Clear();
 }
+

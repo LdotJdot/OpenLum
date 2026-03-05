@@ -40,4 +40,8 @@
           SkipUnchangedFiles="true" />
   </Target>
 
+  <ItemGroup>
+    <ProjectReference Include="..\OpenLum.Core\OpenLum.Core.csproj" />
+  </ItemGroup>
+
 </Project>
