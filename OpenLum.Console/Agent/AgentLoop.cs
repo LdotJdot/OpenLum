@@ -10,6 +10,19 @@ namespace OpenLum.Console.Agent;
 /// </summary>
 public sealed class AgentLoop : IAgent
 {
+    /// <summary>
+    /// Prepended to every user instruction: simple, direct questions can be answered直接; non-trivial tasks should still think first.
+    /// </summary>
+    private const string IntentPromptPrefix =
+        "[思考策略：对于非常简单、明确的小问题，可以直接给出简洁答案；" +
+        "对于稍微复杂、模糊、多步骤或存在不确定性的任务，请先想清 1. 用户真正想要什么 2. 需要弄清哪些条件，再动手解决，禁止先执行再纠错。]\n\n";
+
+    private static string WrapUserInstruction(string userPrompt)
+    {
+        var content = (userPrompt ?? "").Trim();
+        if (content.Length == 0) return IntentPromptPrefix.Trim();
+        return IntentPromptPrefix + content;
+    }
     private readonly IModelProvider _model;
     private readonly IToolRegistry _tools;
     private readonly ISession _session;
@@ -17,6 +30,7 @@ public sealed class AgentLoop : IAgent
     private readonly SessionCompactor? _compactor;
     private readonly Action<string, string>? _onToolExecuting;
     private readonly int? _maxToolResultChars;
+    private readonly int? _maxFailedToolResultChars;
     private readonly int _maxToolTurns;
     private readonly bool _useModelDecideAtLimit;
 
@@ -28,6 +42,7 @@ public sealed class AgentLoop : IAgent
         SessionCompactor? compactor = null,
         Action<string, string>? onToolExecuting = null,
         int? maxToolResultChars = null,
+        int? maxFailedToolResultChars = null,
         int maxToolTurns = 100,
         bool useModelDecideAtLimit = true)
     {
@@ -38,6 +53,7 @@ public sealed class AgentLoop : IAgent
         _compactor = compactor;
         _onToolExecuting = onToolExecuting;
         _maxToolResultChars = maxToolResultChars;
+        _maxFailedToolResultChars = maxFailedToolResultChars;
         _maxToolTurns = Math.Max(1, maxToolTurns);
         _useModelDecideAtLimit = useModelDecideAtLimit;
     }
@@ -47,7 +63,7 @@ public sealed class AgentLoop : IAgent
         IProgress<string>? contentProgress,
         CancellationToken ct = default)
     {
-        _session.Add(new ChatMessage { Role = MessageRole.User, Content = userPrompt });
+        _session.Add(new ChatMessage { Role = MessageRole.User, Content = WrapUserInstruction(userPrompt) });
 
         var maxTurns = _maxToolTurns;
         const int warningAt = 5; // Start warning this many turns before limit
@@ -219,7 +235,20 @@ public sealed class AgentLoop : IAgent
         {
             new() { Role = MessageRole.System, Content = sys }
         };
-        list.AddRange(_session.Messages);
+        var limit = _maxFailedToolResultChars;
+        foreach (var m in _session.Messages)
+        {
+            if (m.Role == MessageRole.Tool && m.IsToolError && limit is { } L && L > 0)
+            {
+                var content = m.Content ?? "";
+                if (content.Length > L)
+                    list.Add(new ChatMessage { Role = m.Role, Content = content[..L] + "\n[...]", ToolCallId = m.ToolCallId, IsToolError = true });
+                else
+                    list.Add(m);
+            }
+            else
+                list.Add(m);
+        }
         return list;
     }
 
@@ -259,7 +288,8 @@ public sealed class AgentLoop : IAgent
         {
             var result = await tool.ExecuteAsync(args, ct);
             var content = result ?? string.Empty;
-            if (_maxToolResultChars is { } limit && limit > 0 && content.Length > limit)
+            // sessions_spawn 的返回是子 agent 的完整回复，不截断，确保主 agent 能完整看到子 agent 的结论，避免重复派发任务
+            if (tc.Name != "sessions_spawn" && _maxToolResultChars is { } limit && limit > 0 && content.Length > limit)
             {
                 content = content[..limit];
             }

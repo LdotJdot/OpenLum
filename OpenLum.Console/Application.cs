@@ -1,6 +1,7 @@
 using OpenLum.Console.Agent;
 using OpenLum.Console.Compaction;
 using OpenLum.Console.Config;
+using OpenLum.Console.Console;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.Providers;
 using OpenLum.Console.Session;
@@ -26,8 +27,10 @@ public sealed class Application
 
         var apiKey = config.Model.ApiKey?.Trim();
         if (string.IsNullOrEmpty(apiKey))
+            apiKey = Environment.GetEnvironmentVariable("OPENLUM_API_KEY", EnvironmentVariableTarget.User)?.Trim();
+        if (string.IsNullOrEmpty(apiKey))
         {
-            System.Console.WriteLine("Set apiKey in openlum.json (or openlum.console.json).");
+            System.Console.WriteLine("Set apiKey in openlum.json (or openlum.console.json), or set OPENLUM_API_KEY environment variable.");
             return 1;
         }
 
@@ -49,8 +52,27 @@ public sealed class Application
 
         IToolRegistry toolsFiltered = new ToolPolicyFilter(baseTools, config.ToolPolicy);
         var subagentPrompt = SystemPromptBuilder.Build(workspaceDir, toolsFiltered);
+        SessionCompactor? compactor = null;
+        if (config.Compaction.Enabled)
+        {
+            compactor = new SessionCompactor(
+                model,
+                maxMessagesBeforeCompact: config.Compaction.MaxMessagesBeforeCompact,
+                reserveRecent: config.Compaction.ReserveRecent,
+                collapseFailedAttempts: config.Compaction.CollapseFailedAttempts
+            );
+        }
         baseTools.Register(
-            new SessionsSpawnTool(model, toolsFiltered, workspaceDir, subagentPrompt)
+            new SessionsSpawnTool(
+                model,
+                toolsFiltered,
+                workspaceDir,
+                subagentPrompt,
+                compactor: compactor,
+                maxToolTurns: config.Agent.MaxToolTurns,
+                maxToolResultChars: config.Compaction.MaxToolResultChars > 0 ? config.Compaction.MaxToolResultChars : null,
+                maxFailedToolResultChars: config.Compaction.MaxFailedToolResultChars > 0 ? config.Compaction.MaxFailedToolResultChars : null,
+                useModelDecideAtLimit: config.Agent.TurnLimitStrategy == "model_decide")
         );
 
         IToolRegistry tools = new ToolPolicyFilter(baseTools, config.ToolPolicy);
@@ -58,33 +80,26 @@ public sealed class Application
 
         var session = new ConsoleSession();
 
-        SessionCompactor? compactor = null;
-        if (config.Compaction.Enabled)
-        {
-            compactor = new SessionCompactor(
-                model,
-                maxMessagesBeforeCompact: config.Compaction.MaxMessagesBeforeCompact,
-                reserveRecent: config.Compaction.ReserveRecent
-            );
-        }
-
         var agent = new AgentLoop(
             model,
             tools,
             session,
             systemPrompt,
-            compactor,
+            compactor: compactor,
             onToolExecuting: (name, args) =>
             {
                 lock (ConsoleLock)
                 {
                     var prev = System.Console.ForegroundColor;
                     System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+                    // Always start tool logs on a fresh line to avoid interleaving
+                    System.Console.WriteLine();
                     System.Console.WriteLine($"  → {name}({args})");
                     System.Console.ForegroundColor = prev;
                 }
             },
             maxToolResultChars: config.Compaction.MaxToolResultChars,
+            maxFailedToolResultChars: config.Compaction.MaxFailedToolResultChars > 0 ? config.Compaction.MaxFailedToolResultChars : null,
             maxToolTurns: config.Agent.MaxToolTurns,
             useModelDecideAtLimit: config.Agent.TurnLimitStrategy == "model_decide"
         );
@@ -172,17 +187,12 @@ public sealed class Application
                 System.Console.Write("Assistant: ");
                 System.Console.ResetColor();
             }
-            var progress = new SyncProgress<string>(c =>
-            {
-                lock (ConsoleLock)
-                {
-                    System.Console.Write(c);
-                }
-            });
+            var progress = new ThinkAwareConsoleProgress(ConsoleLock);
             var result = agent
                 .RunAsync(task.UserQuery, progress, CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            progress.FlushRemaining();
             System.Console.WriteLine();
             if (result.NeedsUserConfirmation)
             {
@@ -204,11 +214,9 @@ public sealed class Application
                         System.Console.Write("Assistant: ");
                         System.Console.ResetColor();
                     }
-                    var progress2 = new SyncProgress<string>(c =>
-                    {
-                        lock (ConsoleLock) System.Console.Write(c);
-                    });
+                    var progress2 = new ThinkAwareConsoleProgress(ConsoleLock);
                     agent.RunAsync("用户确认继续", progress2, CancellationToken.None).GetAwaiter().GetResult();
+                    progress2.FlushRemaining();
                     System.Console.WriteLine();
                 }
                 continue;

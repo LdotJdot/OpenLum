@@ -14,7 +14,7 @@ agent-browser <command> [args] [options]
 ```
 
 
-**打开网站**：默认使用 `--headed` 参数打开，**要显示浏览器窗口**（例如：`agent-browser open --headed "https://example.com"`）。无特殊需求时不要省略 `--headed`。
+**打开网站**：默认 **headless**（不显示浏览器窗口）。仅当用户明确要求「显示窗口」「看到浏览器」「有界面」等时，才在 `open` 命令中加 `--headed`（例如：`agent-browser open --headed "https://example.com"`）。
 
 ---
 
@@ -22,7 +22,7 @@ agent-browser <command> [args] [options]
 
 | 命令 | 说明 |
 |------|------|
-| `open <url>` | 打开 URL（别名：goto, navigate）。**默认加 `--headed`，显示窗口** |
+| `open <url>` | 打开 URL（别名：goto, navigate）。默认 headless；用户要求显示窗口时加 `--headed` |
 | `click <sel>` | 点击元素；`--new-tab` 在新标签打开 |
 | `dblclick <sel>` | 双击 |
 | `fill <sel> <text>` | 清空并填入 |

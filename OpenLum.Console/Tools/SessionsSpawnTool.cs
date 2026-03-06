@@ -1,4 +1,6 @@
 using OpenLum.Console.Agent;
+using OpenLum.Console.Compaction;
+using OpenLum.Console.Console;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.Session;
 
@@ -6,6 +8,10 @@ namespace OpenLum.Console.Tools;
 
 /// <summary>
 /// Spawns a sub-agent to complete a task in an isolated session. Returns the result.
+/// Sub-agent shares the same environment as the parent: same workspace, same tool instances
+/// (read/write/list_dir/exec/memory_*), same model, same Skills section in prompt. Only differences:
+/// (1) Fresh session (no prior chat); (2) No sessions_spawn tool and prompt lists one fewer tool;
+/// (3) Extra "[Sub-agent: ...]" reminder in system prompt; (4) Optional compactor/limits aligned with config.
 /// </summary>
 public sealed class SessionsSpawnTool : ITool
 {
@@ -16,19 +22,36 @@ public sealed class SessionsSpawnTool : ITool
     private readonly string _workspaceDir;
     private readonly string _systemPrompt;
     private readonly int _maxDepth;
+    private readonly SessionCompactor? _compactor;
+    private readonly int _maxToolTurns;
+    private readonly int? _maxToolResultChars;
+    private readonly int? _maxFailedToolResultChars;
+    private readonly bool _useModelDecideAtLimit;
 
     public SessionsSpawnTool(
         IModelProvider model,
         IToolRegistry parentTools,
         string workspaceDir,
         string systemPrompt,
-        int maxDepth = 2)
+        int maxDepth = 2,
+        SessionCompactor? compactor = null,
+        int maxToolTurns = 100,
+        int? maxToolResultChars = null,
+        int? maxFailedToolResultChars = null,
+        bool useModelDecideAtLimit = true)
     {
         _model = model;
         _parentTools = parentTools;
         _workspaceDir = workspaceDir;
-        _systemPrompt = systemPrompt;
+        // Same base prompt as parent (Workspace, Skills, date, style); Tools section has no sessions_spawn.
+        // Append sub-agent reminder so it uses skills (e.g. agent-browser for 联网搜索) the same way as parent.
+        _systemPrompt = systemPrompt.TrimEnd() + "\n\n[Sub-agent: You have the same workspace, tools, and skills as the parent. You must use them the same way: when the task requires web search, browsing, or online information (联网搜索/浏览网页), use the read tool to load the relevant skill (e.g. agent-browser, search) from <available_skills> above, then use exec as described in that skill. Do not say you cannot do web search—you can, via skills and exec.]";
         _maxDepth = maxDepth;
+        _compactor = compactor;
+        _maxToolTurns = Math.Max(1, maxToolTurns);
+        _maxToolResultChars = maxToolResultChars;
+        _maxFailedToolResultChars = maxFailedToolResultChars;
+        _useModelDecideAtLimit = useModelDecideAtLimit;
     }
 
     public string Name => "sessions_spawn";
@@ -55,19 +78,26 @@ public sealed class SessionsSpawnTool : ITool
             subTools,
             subSession,
             _systemPrompt,
-            compactor: null,
+            compactor: _compactor,
             onToolExecuting: (name, arguments) =>
             {
                 lock (ConsoleLock)
                 {
                     var prev = System.Console.ForegroundColor;
                     System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+                    // Always start sub-agent tool logs on a fresh line to avoid interleaving mid-sentence
+                    System.Console.WriteLine();
                     System.Console.WriteLine($"    [{subagentLabel}] → {name}({arguments})");
                     System.Console.ForegroundColor = prev;
                 }
-            });
+            },
+            maxToolResultChars: _maxToolResultChars,
+            maxFailedToolResultChars: _maxFailedToolResultChars,
+            maxToolTurns: _maxToolTurns,
+            useModelDecideAtLimit: _useModelDecideAtLimit);
 
         var startedStreaming = false;
+        var thinkProgress = new ThinkAwareConsoleProgress(ConsoleLock);
         var progress = new Progress<string>(chunk =>
         {
             lock (ConsoleLock)
@@ -81,11 +111,15 @@ public sealed class SessionsSpawnTool : ITool
                     System.Console.Write($"[{subagentLabel}] ");
                     System.Console.ForegroundColor = prev;
                 }
-                System.Console.Write(chunk);
+                thinkProgress.Report(chunk);
             }
         });
 
         var result = await subAgent.RunAsync(task, progress, ct);
+        lock (ConsoleLock)
+        {
+            thinkProgress.FlushRemaining();
+        }
         if (startedStreaming)
         {
             lock (ConsoleLock)
@@ -95,12 +129,31 @@ public sealed class SessionsSpawnTool : ITool
         }
 
         if (!result.Success)
+        {
+            lock (ConsoleLock)
+            {
+                var prev = System.Console.ForegroundColor;
+                System.Console.ForegroundColor = System.ConsoleColor.Cyan;
+                System.Console.WriteLine($"[{subagentLabel}] 已结束（失败）: {result.ErrorMessage ?? "unknown"}");
+                System.Console.ForegroundColor = prev;
+            }
             return $"Sub-agent failed: {result.ErrorMessage ?? "unknown"}";
+        }
+
+        lock (ConsoleLock)
+        {
+            var prev = System.Console.ForegroundColor;
+            System.Console.ForegroundColor = System.ConsoleColor.Cyan;
+            System.Console.WriteLine($"[{subagentLabel}] 已结束，结果已返回主 agent。");
+            System.Console.ForegroundColor = prev;
+        }
 
         var lastAssistant = subSession.Messages
             .Where(m => m.Role == Models.MessageRole.Assistant)
             .LastOrDefault();
-        return lastAssistant?.Content ?? "(no reply)";
+        var reply = lastAssistant?.Content ?? "(no reply)";
+        // 在返回内容前加一行明确标识，便于主 agent 识别“子 agent 已完成并携带以下结果”
+        return $"[子agent已结束，以下为子agent的最终回复]\n\n{reply}";
     }
 
     private IToolRegistry CreateSubagentToolRegistry()

@@ -21,7 +21,7 @@
     "provider": "DeepSeek",
     "model": "deepseek-chat",
     "baseUrl": "https://api.deepseek.com/v1",
-    "apiKey": "sk-c3b5a3ac28d546ce80bacdb7a8242679"
+    "apiKey": ""
   },
   "compaction": {
     "enabled": true,

@@ -25,6 +25,9 @@ public sealed class ChatMessage
 
     /// <summary>Tool call id for a tool result message.</summary>
     public string? ToolCallId { get; init; }
+
+    /// <summary>When Role is Tool: true if the tool returned an error. Used to truncate or collapse failed attempts to save tokens.</summary>
+    public bool IsToolError { get; init; }
 }
 
 /// <summary>

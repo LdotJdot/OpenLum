@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace OpenLum.Console.Config;
 
 /// <summary>
-/// Loads skill metadata from workspace/skills/*/SKILL.md.
+/// Loads skill metadata from workspace/skills/*/SKILL.md (or Skills with capital S for case-sensitive FS).
 /// </summary>
 public static class SkillLoader
 {
@@ -11,17 +11,35 @@ public static class SkillLoader
     private static readonly Regex DescRe = new(@"^description:\s*[""']?(.+?)[""']?\s*$", RegexOptions.Multiline);
 
     /// <summary>
+    /// Enumerates skill root directories in precedence order. Tries both "skills" and "Skills"
+    /// so that repo folder "Skills" is found on case-sensitive file systems (e.g. Linux).
+    /// </summary>
+    private static IEnumerable<string> EnumerateSkillRoots(string workspaceDir)
+    {
+        var baseDirs = new[]
+        {
+            workspaceDir,
+            AppContext.BaseDirectory,
+            Path.GetDirectoryName(AppContext.BaseDirectory) ?? "."
+        };
+        foreach (var baseDir in baseDirs)
+        {
+            var skillsPath = Path.Combine(baseDir, "skills");
+            var skillsPathCapital = Path.Combine(baseDir, "Skills");
+            if (Directory.Exists(skillsPath))
+                yield return skillsPath;
+            else if (Directory.Exists(skillsPathCapital))
+                yield return skillsPathCapital;
+        }
+    }
+
+    /// <summary>
     /// Scan workspace for skills. Looks for skills/*/SKILL.md and workspace/skills/*/SKILL.md.
     /// </summary>
     public static IReadOnlyList<SkillEntry> Load(string workspaceDir, int maxSkills = 50)
     {
         var results = new List<SkillEntry>();
-        var dirs = new[]
-        {
-            Path.Combine(workspaceDir, "skills"),
-            Path.Combine(AppContext.BaseDirectory, "skills"),
-            Path.Combine(Path.GetDirectoryName(AppContext.BaseDirectory) ?? ".", "skills")
-        };
+        var dirs = EnumerateSkillRoots(workspaceDir).ToList();
 
         // Use effective skill name (frontmatter name if present, otherwise folder name)
         // as the unique key, and define a clear precedence:
@@ -103,16 +121,11 @@ public static class SkillLoader
 
     /// <summary>
     /// Returns the directory roots used for skill discovery (for ReadTool to allow reading SKILL.md).
+    /// Uses same enumeration as Load so both "skills" and "Skills" are found on case-sensitive FS.
     /// </summary>
     public static IReadOnlyList<string> GetSkillRoots(string workspaceDir)
     {
-        var roots = new List<string>
-        {
-            Path.Combine(workspaceDir, "skills"),
-            Path.Combine(AppContext.BaseDirectory, "skills"),
-            Path.Combine(Path.GetDirectoryName(AppContext.BaseDirectory) ?? ".", "skills")
-        };
-        return roots.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return EnumerateSkillRoots(workspaceDir).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static (string Description, string Name) ParseFrontmatter(string path)

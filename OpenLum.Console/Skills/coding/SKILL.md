@@ -14,6 +14,7 @@ description: "Local coding workflow: read/write/list_dir/exec，加上 Grep + Se
 - 做 **C# / .NET** 开发与 Debug：先读取并遵守 `csharp` 的 SKILL 约定，再结合本 `coding` 与 `search` skill。
 - 需要写 **临时 Python 脚本** 补充工具能力时：配合 `python` skill，在 `script/任务目录` 下组织脚本。
 - 只需做「查找 / 导航 / 定位代码位置」时：可优先考虑 `search` skill（内部使用 Grep 和 SemanticSearch）。
+- 需要**按行号或按内容做增量编辑**（ReplaceRangeWithText、ReplaceAll、InsertLines、DeleteRange 等）时：配合 `editing` skill，通过 exec 执行其提供的 PowerShell 片段。
 
 ## When to Use
 
@@ -63,9 +64,9 @@ Success = compile passes. Do not run the program; let the user run it.
 5. **exec(command)** — Run shell commands (build, git). Working dir is workspace.
    - **直接使用 PowerShell 语法**：链式用 `;`，禁止 `&&`、`cmd /c`、bash 风格。含空格路径用 `& "path"`。
 
-## 切块读取与增量编辑（exec + PowerShell）
+## 切块读取与增量编辑（exec + PowerShell / editing skill）
 
-当前没有单独的「按行号读」「按片段替换」工具，可用 **exec** 执行 PowerShell 实现，效果类似「Grep 定位 → 读某几行 → 只改那几行」。
+当前没有单独的「按行号读」「按片段替换」工具，可用 **exec** 执行 PowerShell 实现；更完整的编辑方法（ReadRange、ReplaceRangeWithText、ReplaceAll、InsertLines、DeleteRange、AppendLines 等）见 **editing** skill，均用 Shell 命令行实现，可直接在编程时复用。
 
 ### 切块读取：只读第 S 行～第 E 行
 

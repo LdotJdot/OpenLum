@@ -34,7 +34,8 @@ public sealed class ConsoleSession : ICompactableSession
             {
                 Role = MessageRole.Tool,
                 Content = r.Content,
-                ToolCallId = r.ToolCallId
+                ToolCallId = r.ToolCallId,
+                IsToolError = r.IsError
             });
         }
     }

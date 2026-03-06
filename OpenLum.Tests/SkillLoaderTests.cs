@@ -24,7 +24,8 @@ public class SkillLoaderTests
             """);
 
             var entries = SkillLoader.Load(temp.FullName, maxSkills: 10);
-            Assert.Single(entries);
+            Assert.True(entries.Count >= 1, "At least workspace skill should be loaded");
+            // Workspace has highest precedence: first entry must be from our temp workspace
             Assert.Equal("foo-skill", entries[0].Name);
             Assert.Contains("from workspace", entries[0].Description);
         }

@@ -1,6 +1,6 @@
 ---
 name: read
-description: "PDF/Office/CAD 提取文本。--start N --limit N；续读时 next_start = last_start + last_limit，禁止用固定步长猜测。"
+description: "如果要对纯文本文件或特定目标文件 如PDF/Office(docx,doc,pptx,ppt)/CAD 简单提取纯文本文本，则使用改技能执行。--start N --limit N；续读时 next_start = last_start + last_limit，禁止用固定步长猜测。"
 ---
 
 # Read Skill

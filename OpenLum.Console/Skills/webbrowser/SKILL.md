@@ -16,10 +16,8 @@ description: "浏览网页。与 read skill 风格一致：直接 exec 调用 ex
 ## 命令格式
 
 ```
-openlum-browser.exe [--visible|--headless] <command> [args]
+openlum-browser.exe [--headless] <command> [args]
 ```
-
-- 浏览器可见性由 exe 目录下的 `openlum-browser.json` 指定（`forceVisible`：true 时强制显示，false 时由 `init` 的 headless/visible 决定）
 
 ## 命令
 
@@ -58,11 +56,6 @@ upload --ref <REF> --paths <path1> [path2...]
 tabs [--switch N]
 ```
 
-### init — 切换配置（如可见性）
-```
-init [--visible|--headless]
-```
-
 ### quit — 退出
 ```
 quit
@@ -98,7 +91,7 @@ quit
 
 ## 典型流程
 
-1. `navigate --url https://cn.bing.com`（加 `--visible` 显示窗口）→ 返回 snapshot 和 refs
+1. `navigate --url https://cn.bing.com` → 返回 snapshot 和 refs
 2. 从 snapshot 找到搜索框 ref
 3. `type --ref N --text "关键词" --submit` → 返回新页面 snapshot
 4. 新标签页时 `tabs --switch 1` 切换后再操作

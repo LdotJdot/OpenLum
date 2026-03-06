@@ -102,7 +102,7 @@ Load order: `openlum.json` → `openlum.console.json` → `appsettings.json`.
 | `model.provider` | e.g. OpenAI, DeepSeek, Ollama |
 | `model.model` | Model id |
 | `model.baseUrl` | API base URL |
-| `model.apiKey` | API key |
+| `model.apiKey` | API key. If empty, read from env `OPENLUM_API_KEY`. |
 | `workspace` | Workspace root for tools |
 | `compaction.enabled` | Enable compaction |
 | `compaction.maxMessagesBeforeCompact` | Messages before compact |
@@ -240,7 +240,7 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 | `model.provider` | 如 OpenAI、DeepSeek、Ollama |
 | `model.model` | 模型 id |
 | `model.baseUrl` | API 基础地址 |
-| `model.apiKey` | API 密钥 |
+| `model.apiKey` | API 密钥。为空时从环境变量 `OPENLUM_API_KEY` 读取。 |
 | `workspace` | 工具工作区根目录 |
 | `compaction.enabled` | 是否启用压缩 |
 | `compaction.maxMessagesBeforeCompact` | 压缩前消息数 |

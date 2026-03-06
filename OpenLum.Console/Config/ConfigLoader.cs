@@ -105,12 +105,17 @@ public static class ConfigLoader
         var baseUrlEnv = Environment.GetEnvironmentVariable("OPENLUM_BASE_URL");
         var apiKeyEnv = Environment.GetEnvironmentVariable("OPENLUM_API_KEY");
 
+        // If apiKey in JSON is empty, use OPENLUM_API_KEY env var; otherwise env overrides JSON when set.
+        var resolvedApiKey = string.IsNullOrWhiteSpace(config.ApiKey)
+            ? apiKeyEnv
+            : (!string.IsNullOrWhiteSpace(apiKeyEnv) ? apiKeyEnv : config.ApiKey);
+
         return new ModelConfig
         {
             Provider = !string.IsNullOrWhiteSpace(providerEnv) ? providerEnv : config.Provider,
             Model = !string.IsNullOrWhiteSpace(modelEnv) ? modelEnv : config.Model,
             BaseUrl = !string.IsNullOrWhiteSpace(baseUrlEnv) ? baseUrlEnv : config.BaseUrl,
-            ApiKey = !string.IsNullOrWhiteSpace(apiKeyEnv) ? apiKeyEnv : config.ApiKey,
+            ApiKey = resolvedApiKey,
             NoThinking = config.NoThinking
         };
     }
@@ -125,7 +130,9 @@ public static class ConfigLoader
             Enabled = el.TryGetProperty("enabled", out var e) && e.GetBoolean(),
             MaxMessagesBeforeCompact = el.TryGetProperty("maxMessagesBeforeCompact", out var m) && m.TryGetInt32(out var n) ? n : 30,
             ReserveRecent = el.TryGetProperty("reserveRecent", out var r) && r.TryGetInt32(out var rr) ? rr : 10,
-            MaxToolResultChars = el.TryGetProperty("maxToolResultChars", out var tr) && tr.TryGetInt32(out var trn) ? trn : 8000
+            MaxToolResultChars = el.TryGetProperty("maxToolResultChars", out var tr) && tr.TryGetInt32(out var trn) ? trn : 8000,
+            MaxFailedToolResultChars = el.TryGetProperty("maxFailedToolResultChars", out var tf) && tf.TryGetInt32(out var tfn) ? tfn : 400,
+            CollapseFailedAttempts = el.TryGetProperty("collapseFailedAttempts", out var cf) ? cf.GetBoolean() : true
         };
     }
 
@@ -202,6 +209,10 @@ public sealed class CompactionConfig
     public int ReserveRecent { get; init; } = 10;
     /// <summary>Maximum characters from a single tool result to keep in session history.</summary>
     public int MaxToolResultChars { get; init; } = 8000;
+    /// <summary>When sending to model: cap length of failed tool results to save tokens. 0 = no cap. Default 400.</summary>
+    public int MaxFailedToolResultChars { get; init; } = 400;
+    /// <summary>When compacting: merge consecutive failed tool attempts into one short note before summarizing. Default true.</summary>
+    public bool CollapseFailedAttempts { get; init; } = true;
 }
 
 /// <summary>Agent loop configuration (tool turn limit and behavior at limit).</summary>
