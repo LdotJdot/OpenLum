@@ -6,40 +6,66 @@
 
 ## English
 
-**OpenLumSharp** is a personal AI assistant runtime implemented in C#. It is inspired by [OpenClaw](https://github.com/openclaw/openclaw), reimagined in .NET for developers who prefer the C# ecosystem.
-
-> OpenClaw is a personal AI assistant that runs on your own devices. OpenLumSharp brings similar concepts—agent loop, tools, skills, sessions—into a native C# implementation.
+**OpenLumSharp** — C# personal AI assistant runtime. Inspired by [OpenClaw](https://github.com/openclaw/openclaw), implemented in .NET.
 
 ### Features
 
-- **Agent loop** — ReAct-style loop with tool calling and streaming responses
-- **Tools** — Built-in tools: `read`, `write`, `list_dir`, `exec`, `memory_get`, `memory_search`, `sessions_spawn`
-- **Skills** — Load external skills from `Skills/` directory (similar to OpenClaw skills)
-- **Session compaction** — Optional context summarization to reduce token usage
-- **Model providers** — OpenAI API–compatible providers (OpenAI, DeepSeek, Ollama, etc.)
-- **Tool policy** — Allow/deny tool access via configuration
+- **Agent loop** — ReAct-style loop, tool calling, streaming
+- **Tools** — `read`, `write`, `list_dir`, `exec`, `memory_get`, `memory_search`, `sessions_spawn`
+- **Skills** — External skills from `Skills/` (see [Skill execution](#skill-execution-extension))
+- **Session compaction** — Optional context summarization
+- **Model** — OpenAI API–compatible (OpenAI, DeepSeek, Ollama, etc.)
+- **Tool policy** — Allow/deny by profile and allow/deny lists
 
 ### Projects
 
 | Project | Description |
 |---------|-------------|
-| **OpenLum.Console** | CLI agent with REPL, supports Native AOT publishing |
-| **OpenLum.Browser** | Browser automation companion using Microsoft Playwright |
+| **OpenLum.Console** | CLI agent, REPL, Native AOT publish |
+| **OpenLum.Browser** | Legacy Playwright browser (optional). **Browser automation is now via the agent-browser skill** (see below). |
+| **OpenLum.Core** | Shared library |
+| **OpenLum.Tests** | Unit tests |
+
+### Browser automation
+
+Browser actions (open, snapshot, click, type, screenshot, etc.) are provided by the **agent-browser** skill: the agent uses the `exec` tool to run the [agent-browser](https://agent-browser.dev/commands) CLI. Install it locally (e.g. `npm i -g @agent-browser/cli` or per-project) and ensure `agent-browser` is on PATH. The old **OpenLum.Browser** (Playwright) is no longer used by the console; it remains in the repo as an optional/legacy component.
+
+### Skill execution extension
+
+Skills extend the agent without new C# tools:
+
+1. **Discovery** — The app scans for skills in:
+   - `workspace/skills/*/`
+   - `AppContext.BaseDirectory/skills/*/` (e.g. `OpenLum.Console/bin/.../skills/`)
+   - Parent directory `skills/*/`
+   Each subfolder that contains a `SKILL.md` is one skill. Priority: workspace > app base > parent; same name skips lower priority.
+
+2. **Metadata** — From each `SKILL.md`, frontmatter is parsed:
+   - `name:` — Skill name (default: folder name)
+   - `description:` — Short description for the model
+
+3. **Prompt** — Skill list (name, description, path to `SKILL.md`) is injected into the system prompt. The model is told to use the **read** tool to load a skill’s `SKILL.md` when needed, and to use **exec** to run commands (e.g. skill dir exes or `agent-browser ...`). Never infer exe names from skill names; always read `SKILL.md` first.
+
+4. **Execution** — The model reads `SKILL.md` for usage and paths, then runs:
+   - Executables under the skill folder (e.g. `Skills/read/read-pdf.exe`), or
+   - Shell commands (e.g. `agent-browser open --headed "https://example.com"`).
+
+Adding a skill: add a folder under `OpenLum.Console/Skills/<SkillName>/` with `SKILL.md` (and optional exes). It is copied to output/publish automatically.
 
 ### Requirements
 
-- .NET 8.0+ (target: .NET 10.0; can fall back to .NET 9.0 if needed)
+- .NET 10.0 (or .NET 9.0 fallback)
 - `openlum.json` with `apiKey` and model settings
 
 ### Quick Start
 
-1. Clone the repository:
+1. Clone and enter:
    ```bash
-   git clone https://github.com/LdotJdot/OpenLum.git
-   cd OpenLum
+   git clone https://github.com/LdotJdot/OpenLumSharp.git
+   cd OpenLumSharp
    ```
 
-2. Create `OpenLum.Console/openlum.json` (copy from example below):
+2. Create `OpenLum.Console/openlum.json`:
    ```json
    {
      "model": {
@@ -57,149 +83,127 @@
    }
    ```
 
-3. Run the console agent:
+3. Run:
    ```bash
    dotnet run --project OpenLum.Console
    ```
 
-4. (Optional) Publish as a single-file executable with Native AOT:
+4. Optional — Native AOT single-file publish:
    ```bash
    dotnet publish OpenLum.Console -c Release -r win-x64
    ```
 
 ### Configuration
 
-Config is loaded from (in order): `openlum.json` → `openlum.console.json` → `appsettings.json`.
+Load order: `openlum.json` → `openlum.console.json` → `appsettings.json`.
 
 | Key | Description |
 |-----|-------------|
-| `model.provider` | Provider name (e.g., OpenAI, DeepSeek, Ollama) |
-| `model.model` | Model identifier |
+| `model.provider` | e.g. OpenAI, DeepSeek, Ollama |
+| `model.model` | Model id |
 | `model.baseUrl` | API base URL |
 | `model.apiKey` | API key |
-| `model_backup` | Fallback model when primary fails (not yet wired) |
 | `workspace` | Workspace root for tools |
-| `compaction.enabled` | Enable session compaction |
-| `compaction.maxMessagesBeforeCompact` | Messages before compacting |
-| `compaction.reserveRecent` | Recent messages to keep |
-| `tools.profile` | Tool policy profile (`minimal`, `coding`, `messaging`, `local`, `full`) |
-| `tools.allow` / `tools.deny` | Tool allow/deny lists (tool or group names) |
+| `compaction.enabled` | Enable compaction |
+| `compaction.maxMessagesBeforeCompact` | Messages before compact |
+| `compaction.reserveRecent` | Messages to keep after compact |
+| `tools.profile` | `minimal` \| `coding` \| `messaging` \| `local` \| `full` |
+| `tools.allow` / `tools.deny` | Tool or group names |
 
-#### Tool profiles and example configs
+Env overrides: `OPENLUM_PROVIDER`, `OPENLUM_MODEL`, `OPENLUM_BASE_URL`, `OPENLUM_API_KEY`. Strict config: `OPENLUM_STRICT_CONFIG=1`.
 
-Built‑in profiles are defined in `ToolProfiles`:
+#### Tool profiles
 
-| Profile | Base tools (before allow/deny) | Typical use |
-|---------|--------------------------------|-------------|
-| `minimal` | `list_dir` only | Very safe, read‑only exploration (you can still add tools via `allow`) |
-| `coding` | `group:fs`, `group:web`, `group:runtime` | Local development: filesystem + browser + `exec`, no memory/sessions |
-| `messaging` | `list_dir` only | For chat/messaging shells that rarely need tools |
-| `local` | `group:fs`, `group:web`, `group:runtime`, `group:memory`, `group:sessions` | Full local work: coding + memory + sub‑sessions |
-| `full` | same as `local` | Alias for “everything enabled” |
+| Profile | Base tools |
+|---------|------------|
+| `minimal` | `list_dir` only |
+| `coding` | group:fs, group:web, group:runtime |
+| `messaging` | `list_dir` only |
+| `local` / `full` | group:fs, group:web, group:runtime, group:memory, group:sessions |
 
-You can refine a profile with `allow` / `deny`. Some useful recipes:
-
-- **Safe coding (no exec, no browser, read‑heavy)** — start from `minimal`, then allow just what you need:
-
-  ```json
-  {
-    "tools": {
-      "profile": "minimal",
-      "allow": [ "read", "group:memory" ],
-      "deny": []
-    }
-  }
-  ```
-
-- **Local development (default for most cases)** — use `local` with no overrides:
-
-  ```json
-  {
-    "tools": {
-      "profile": "local",
-      "allow": [],
-      "deny": []
-    }
-  }
-  ```
-
-- **Paranoid mode (disable all tools)** — use `deny: ["*"]`:
-
-  ```json
-  {
-    "tools": {
-      "profile": "local",
-      "allow": [],
-      "deny": [ "*" ]
-    }
-  }
-  ```
-
-  With this config the agent can still chat, but all tools are disabled regardless of the profile.
-
-Model config also supports environment‑variable overrides:
-
-- `OPENLUM_PROVIDER`, `OPENLUM_MODEL`, `OPENLUM_BASE_URL`, `OPENLUM_API_KEY`
-- Precedence: **environment variable → JSON → hardcoded defaults**.
-
-Config loading behavior can be made strict by setting:
-
-- `OPENLUM_STRICT_CONFIG=1` (or `true` / `yes`) — any parse error in `openlum.json` / `openlum.console.json` / `appsettings.json` will cause startup to fail with a clear error message instead of silently falling back to defaults.
+Refine with `allow`/`deny`. Deny all tools: `"deny": ["*"]`.
 
 ### Comparison with OpenClaw
 
 | Aspect | OpenClaw | OpenLumSharp |
 |--------|----------|--------------|
-| Language | TypeScript/Node.js | C# / .NET |
-| Runtime | Node ≥22 | .NET 8+ |
-| Deployment | npm, Docker | `dotnet run`, Native AOT |
+| Language / runtime | TypeScript/Node.js, Node ≥22 | C# / .NET 10  |
+| Deployment | npm, Docker | `dotnet run`, Native AOT single-file |
 | Channels | WhatsApp, Telegram, Slack, etc. | Console REPL (extensible) |
-| Tools & Skills | Full ecosystem | Core tools + skills loading |
+| Tools & skills | Full ecosystem, skills + tools | Core tools + Skills dir (read/exec–driven) |
+| Browser | Built-in or companion browser | agent-browser skill (local CLI) |
+| Focus | Multi-channel messaging, companion apps | Local CLI, self-contained runtime, .NET integration |
 
-OpenLumSharp focuses on a minimal, self-contained agent runtime. It does not include multi-channel messaging or companion apps; it is designed for local CLI use and integration into your own .NET workflows.
+OpenClaw focuses on multi-channel messaging and companion UX; OpenLumSharp on a minimal, local agent runtime and C# ecosystem integration.
 
 ### License
 
-MIT License. See [LICENSE.txt](LICENSE.txt) for details.
+MIT. See [LICENSE.txt](LICENSE.txt).
 
 ---
 
 ## 中文
 
-**OpenLumSharp** 是一个使用 C# 实现的个人 AI 助手运行时。它参考了 [OpenClaw](https://github.com/openclaw/openclaw)，用 .NET 重新实现，面向偏好 C# 生态的开发者。
+**OpenLumSharp** — 使用 C# 实现的个人 AI 助手运行时。参考 [OpenClaw](https://github.com/openclaw/openclaw)，在 .NET 中实现。
 
-> OpenClaw 是运行在本地的个人 AI 助手。OpenLumSharp 将类似概念——Agent 循环、工具、技能、会话——以原生 C# 的形式实现。
+### 功能
 
-### 功能特点
+- **Agent 循环** — ReAct 风格循环、工具调用、流式输出
+- **工具** — `read`、`write`、`list_dir`、`exec`、`memory_get`、`memory_search`、`sessions_spawn`
+- **技能** — 从 `Skills/` 加载外部技能（见 [Skill 执行扩展](#skill-执行扩展)）
+- **会话压缩** — 可选上下文摘要
+- **模型** — 兼容 OpenAI API（OpenAI、DeepSeek、Ollama 等）
+- **工具策略** — 按 profile 与 allow/deny 控制
 
-- **Agent 循环** — 基于 ReAct 的工具调用与流式响应
-- **工具** — 内置：`read`、`write`、`list_dir`、`exec`、`memory_get`、`memory_search`、`sessions_spawn`
-- **技能** — 从 `Skills/` 目录加载外部技能（类似 OpenClaw 的 skills）
-- **会话压缩** — 可选的上下文摘要以降低 token 消耗
-- **模型提供者** — 兼容 OpenAI API 的提供者（OpenAI、DeepSeek、Ollama 等）
-- **工具策略** — 通过配置允许/禁止工具访问
-
-### 项目构成
+### 项目
 
 | 项目 | 说明 |
 |------|------|
-| **OpenLum.Console** | 命令行 Agent，支持 REPL，可发布为 Native AOT |
-| **OpenLum.Browser** | 基于 Microsoft Playwright 的浏览器自动化伴侣 |
+| **OpenLum.Console** | 命令行 Agent，REPL，可 Native AOT 发布 |
+| **OpenLum.Browser** | 旧版 Playwright 浏览器（可选）。**浏览器自动化已改为 agent-browser 技能**（见下）。 |
+| **OpenLum.Core** | 公共库 |
+| **OpenLum.Tests** | 单元测试 |
+
+### 浏览器自动化
+
+浏览器操作（打开、快照、点击、输入、截图等）由 **agent-browser** 技能提供：Agent 通过 `exec` 调用本机 [agent-browser](https://agent-browser.dev/commands) CLI。请在本机安装（如 `npm i -g @agent-browser/cli` 或项目内安装），并保证 `agent-browser` 在 PATH 中。原 **OpenLum.Browser**（Playwright）已不再被控制台使用，仅作为可选/遗留保留在仓库中。
+
+### Skill 执行扩展
+
+技能在不新增 C# 工具的前提下扩展 Agent 能力：
+
+1. **发现** — 从以下位置扫描技能：
+   - `workspace/skills/*/`
+   - `AppContext.BaseDirectory/skills/*/`（如 `OpenLum.Console/bin/.../skills/`）
+   - 父目录 `skills/*/`
+   每个包含 `SKILL.md` 的子目录视为一个技能。优先级：workspace > 程序目录 > 父目录；同名只保留高优先级。
+
+2. **元数据** — 从每个 `SKILL.md` 解析 frontmatter：
+   - `name:` — 技能名（默认取目录名）
+   - `description:` — 给模型看的简短说明
+
+3. **注入** — 技能列表（name、description、SKILL.md 路径）写入 system prompt。模型被要求：需要时用 **read** 工具读取该技能的 `SKILL.md`，用 **exec** 执行命令（如技能目录下的 exe 或 `agent-browser ...`）。禁止根据技能名猜测 exe 名，必须先读 `SKILL.md`。
+
+4. **执行** — 模型按 `SKILL.md` 的用法与路径执行：
+   - 技能目录下的可执行文件（如 `Skills/read/read-pdf.exe`），或
+   - Shell 命令（如 `agent-browser open --headed "https://example.com"`）。
+
+新增技能：在 `OpenLum.Console/Skills/<技能名>/` 下放 `SKILL.md`（及可选 exe），构建/发布时会自动复制。
 
 ### 环境要求
 
-- .NET 8.0 或更高（目标框架 .NET 10.0，可回退到 .NET 9.0）
-- 在 `openlum.json` 中配置 `apiKey` 和模型参数
+- .NET 10.0（或 .NET 9.0 回退）
+- `openlum.json` 中配置 `apiKey` 与模型
 
 ### 快速开始
 
-1. 克隆仓库：
+1. 克隆并进入：
    ```bash
-   git clone https://github.com/LdotJdot/OpenLum.git
-   cd OpenLum
+   git clone https://github.com/LdotJdot/OpenLumSharp.git
+   cd OpenLumSharp
    ```
 
-2. 在 `OpenLum.Console/` 下创建 `openlum.json`（可参考下方示例）：
+2. 在 `OpenLum.Console/` 下创建 `openlum.json`：
    ```json
    {
      "model": {
@@ -217,107 +221,59 @@ MIT License. See [LICENSE.txt](LICENSE.txt) for details.
    }
    ```
 
-3. 运行控制台 Agent：
+3. 运行：
    ```bash
    dotnet run --project OpenLum.Console
    ```
 
-4. （可选）以 Native AOT 单文件可执行形式发布：
+4. 可选 — Native AOT 单文件发布：
    ```bash
    dotnet publish OpenLum.Console -c Release -r win-x64
    ```
 
-### 配置说明
+### 配置
 
-配置按优先级从以下文件中加载：`openlum.json` > `openlum.console.json` > `appsettings.json`。
+加载顺序：`openlum.json` → `openlum.console.json` → `appsettings.json`。
 
 | 配置项 | 说明 |
 |--------|------|
-| `model.provider` | 提供者名称（如 OpenAI、DeepSeek、Ollama） |
-| `model.model` | 模型标识 |
+| `model.provider` | 如 OpenAI、DeepSeek、Ollama |
+| `model.model` | 模型 id |
 | `model.baseUrl` | API 基础地址 |
-| `model.apiKey` | API 密钥（推荐通过环境变量 `OPENLUM_API_KEY` 配置） |
-| `model_backup` | 主模型失败时的备用模型（暂未在代码中使用） |
+| `model.apiKey` | API 密钥 |
 | `workspace` | 工具工作区根目录 |
-| `compaction.enabled` | 是否启用会话压缩 |
-| `compaction.maxMessagesBeforeCompact` | 压缩前的消息数量 |
-| `compaction.reserveRecent` | 压缩后保留的最近消息数 |
-| `tools.profile` | 工具策略（`minimal` / `coding` / `messaging` / `local` / `full`） |
-| `tools.allow` / `tools.deny` | 工具白名单 / 黑名单（可以是具体工具名或组名） |
+| `compaction.enabled` | 是否启用压缩 |
+| `compaction.maxMessagesBeforeCompact` | 压缩前消息数 |
+| `compaction.reserveRecent` | 压缩后保留消息数 |
+| `tools.profile` | `minimal` / `coding` / `messaging` / `local` / `full` |
+| `tools.allow` / `tools.deny` | 工具名或组名 |
 
-#### 工具 Profile 与推荐配置示例
+环境变量覆盖：`OPENLUM_PROVIDER`、`OPENLUM_MODEL`、`OPENLUM_BASE_URL`、`OPENLUM_API_KEY`。严格模式：`OPENLUM_STRICT_CONFIG=1`。
 
-内置 profile 在 `ToolProfiles` 中定义：
+#### 工具 Profile
 
-| Profile | 默认工具（未应用 allow/deny 前） | 场景 |
-|---------|----------------------------------|------|
-| `minimal` | 仅 `list_dir` | 极度安全，只读浏览目录（可以用 `allow` 再加工具） |
-| `coding` | `group:fs`, `group:web`, `group:runtime` | 本地开发：文件 + 浏览器 + `exec`，不含 memory/sessions |
-| `messaging` | 仅 `list_dir` | 以聊天为主、几乎不用工具的场景 |
-| `local` | `group:fs`, `group:web`, `group:runtime`, `group:memory`, `group:sessions` | 本地日常开发：包含内存与子智能体 |
-| `full` | 同 `local` | “全开”别名 |
+| Profile | 默认工具 |
+|---------|----------|
+| `minimal` | 仅 `list_dir` |
+| `coding` | group:fs, group:web, group:runtime |
+| `messaging` | 仅 `list_dir` |
+| `local` / `full` | group:fs, group:web, group:runtime, group:memory, group:sessions |
 
-可以通过 `allow` / `deny` 在 profile 基础上做精细控制。一些常用组合：
+可用 `allow`/`deny` 微调。禁用全部工具：`"deny": ["*"]`。
 
-- **安全 coding（无 exec / 无浏览器，偏只读）** — 基于 `minimal`，只放开读和记忆：
-
-  ```json
-  {
-    "tools": {
-      "profile": "minimal",
-      "allow": [ "read", "group:memory" ],
-      "deny": []
-    }
-  }
-  ```
-
-- **本地开发（推荐默认）** — 直接使用 `local`，不过度限制：
-
-  ```json
-  {
-    "tools": {
-      "profile": "local",
-      "allow": [],
-      "deny": []
-    }
-  }
-  ```
-
-- **全禁（只聊天，不用任何工具）** — 利用 `deny: ["*"]`：
-
-  ```json
-  {
-    "tools": {
-      "profile": "local",
-      "allow": [],
-      "deny": [ "*" ]
-    }
-  }
-  ```
-
-  这时 Agent 仍可对话，但所有工具都会被策略层禁止。
-
-模型配置支持通过环境变量覆写 JSON 中的设置：
-
-- `OPENLUM_PROVIDER`、`OPENLUM_MODEL`、`OPENLUM_BASE_URL`、`OPENLUM_API_KEY`
-- 优先级：**环境变量 > JSON 配置 > 代码默认值**。
-
-同时，加载配置时可以开启严格模式，避免静默忽略异常：
-
-- 设置 `OPENLUM_STRICT_CONFIG=1`（或 `true` / `yes`）后，若 `openlum.json` / `openlum.console.json` / `appsettings.json` 解析失败，会在启动时报错并退出，而不是静默使用默认配置。
-
-### 与 OpenClaw 的对比
+### 与 OpenClaw 对比
 
 | 方面 | OpenClaw | OpenLumSharp |
 |------|----------|--------------|
-| 语言 | TypeScript / Node.js | C# / .NET |
-| 运行时 | Node ≥22 | .NET 8+ |
-| 部署方式 | npm、Docker | `dotnet run`、Native AOT |
-| 渠道 | WhatsApp、Telegram、Slack 等 | 控制台 REPL（可扩展） |
-| 工具与技能 | 完整生态 | 核心工具 + 技能加载 |
+| 语言 / 运行时 | TypeScript/Node.js，Node ≥22 | C# / .NET 10 |
+| 部署方式 | npm、Docker | `dotnet run`、Native AOT 单文件 |
+| 渠道 | WhatsApp、Telegram、Slack 等消息渠道 | 控制台 REPL，可扩展 |
+| 工具与技能 | 完整生态，技能与工具深度集成 | 核心工具 + Skills 目录扩展（read/exec 驱动） |
+| 浏览器 | 内置或配套浏览器能力 | 通过 agent-browser 技能（本机 CLI） |
+| 定位 | 多端消息、伴侣应用 | 本地 CLI、自包含运行时、嵌入 .NET 工作流 |
 
-OpenLumSharp 聚焦于轻量、自包含的 Agent 运行时，不包含多渠道消息或配套应用，适合在本地 CLI 使用，或集成到自己的 .NET 工作流中。
+OpenClaw 侧重多通道消息与端到端伴侣体验；OpenLumSharp 侧重轻量、单机 Agent 运行时与 C# 生态集成。
 
 ### 许可证
 
-MIT License。详见 [LICENSE.txt](LICENSE.txt)。
+MIT。见 [LICENSE.txt](LICENSE.txt)。
