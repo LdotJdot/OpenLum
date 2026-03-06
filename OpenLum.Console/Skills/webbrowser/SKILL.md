@@ -23,7 +23,7 @@ openlum-browser.exe [--headless] <command> [args]
 
 ### navigate — 打开 URL
 ```
-navigate --url <URL>
+navigate --url <URL> --headless
 ```
 
 ### snapshot — 获取页面结构
@@ -66,7 +66,7 @@ quit
 
 ```powershell
 # 打开 Bing，显示窗口
-& "skills/webbrowser/browser/openlum-browser.exe" --visible navigate --url "https://cn.bing.com"
+& "skills/webbrowser/browser/openlum-browser.exe" --headless navigate --url "https://cn.bing.com"
 
 # 获取快照（找搜索框 ref）
 & "skills/webbrowser/browser/openlum-browser.exe" snapshot
@@ -75,7 +75,7 @@ quit
 & "skills/webbrowser/browser/openlum-browser.exe" type --ref 2 --text "ldotjdot" --submit
 
 # 无头模式打开
-& "skills/webbrowser/browser/openlum-browser.exe" navigate --url "https://example.com"
+& "skills/webbrowser/browser/openlum-browser.exe" --headless navigate --url "https://example.com"
 
 # 退出（关闭浏览器，失去当前上下文）
 & "skills/webbrowser/browser/openlum-browser.exe" quit
