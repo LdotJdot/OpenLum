@@ -52,7 +52,7 @@ public sealed class ExecTool : ITool
         if (TryResolveSkillExeWorkingDir(command, out var skillExeDir))
             workingDir = skillExeDir;
 
-        // 校验 skill exe 是否存在，避免 LLM 幻觉调用不存在的文件（如 webbrowser.exe）
+        // 校验 skill exe 是否存在，避免 LLM 幻觉调用不存在的文件（如 skills/read/... 下的 exe；webbrowser 已改为 shell 调用 agent-browser）
         if (TryExtractSkillExePath(command, out var exePath) && !File.Exists(exePath))
         {
             var skillDir = Path.GetDirectoryName(exePath) ?? "";
