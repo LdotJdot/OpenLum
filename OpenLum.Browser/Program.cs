@@ -13,7 +13,22 @@ namespace OpenLum.Browser;
 
 internal static class Program
 {
-    private static string BaseDir => AppContext.BaseDirectory;
+    private static string BaseDir
+    {
+        get
+        {
+            // 对于单文件发布，AppContext.BaseDirectory 指向解压目录，
+            // 这里优先使用实际 exe 所在目录，便于旁路配置（openlum-browser.json）生效。
+            var exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                var dir = Path.GetDirectoryName(exePath);
+                if (!string.IsNullOrEmpty(dir))
+                    return dir;
+            }
+            return AppContext.BaseDirectory;
+        }
+    }
 
     /// <summary>控制文件路径，主进程写入 socket 路径供客户端读取。</summary>
     private static string CtlFilePath => Path.Combine(BaseDir, "openlum-browser.ctl");
@@ -78,7 +93,7 @@ internal static class Program
     {
         try
         {
-            var dir = AppContext.BaseDirectory;
+            var dir = BaseDir;
             var path = Path.Combine(dir, "openlum-browser.log");
             File.AppendAllText(path, $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
         }
@@ -191,7 +206,7 @@ internal static class Program
 
     private static void LoadConfigFromExeDir()
     {
-        var dir = AppContext.BaseDirectory;
+        var dir = BaseDir;
         var path = Path.Combine(dir, "openlum-browser.json");
         if (!File.Exists(path))
             return;
@@ -219,7 +234,7 @@ internal static class Program
     {
         var exe =
             Environment.ProcessPath
-            ?? Path.Combine(AppContext.BaseDirectory, "openlum-browser.exe");
+            ?? Path.Combine(BaseDir, "openlum-browser.exe");
         if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
         {
             Console.Error.WriteLine($"openlum-browser: exe not found: {exe}");
@@ -229,7 +244,7 @@ internal static class Program
         {
             FileName = exe,
             Arguments = "--master",
-            WorkingDirectory = AppContext.BaseDirectory,
+            WorkingDirectory = BaseDir,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -301,7 +316,7 @@ internal static class Program
                 );
                 return 1;
             }
-            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+            using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await socket
                 .ConnectAsync(new UnixDomainSocketEndPoint(path), cts.Token)
@@ -319,6 +334,19 @@ internal static class Program
         catch (OperationCanceledException)
         {
             Console.Error.WriteLine("openlum-browser: connect timeout.");
+            return 1;
+        }
+        catch (SocketException ex)
+        {
+            Console.Error.WriteLine(
+                $"openlum-browser: socket error ({(int)ex.SocketErrorCode}): {ex.Message}"
+            );
+            if (ex.SocketErrorCode == SocketError.NoBufferSpaceAvailable)
+            {
+                Console.Error.WriteLine(
+                    "openlum-browser: 套接字缓冲区或队列已满，主进程可能正忙，请稍后重试。"
+                );
+            }
             return 1;
         }
         catch (IOException ex)
@@ -402,7 +430,7 @@ internal static class Program
         try
         {
             listener.Bind(new UnixDomainSocketEndPoint(socketPath));
-            listener.Listen(1);
+            listener.Listen(16);
             Log("[server] SocketServerLoop: listening at " + socketPath);
 
             try
@@ -514,6 +542,12 @@ internal static class Program
                     break;
                 case "tabs":
                     result = await CmdTabs(req).ConfigureAwait(false);
+                    break;
+                case "eval":
+                    result = await CmdEval(req).ConfigureAwait(false);
+                    break;
+                case "find":
+                    result = await CmdFind(req).ConfigureAwait(false);
                     break;
                 case "quit":
                     await CloseAsync().ConfigureAwait(false);
@@ -727,8 +761,28 @@ internal static class Program
     private static async Task<object?> CmdClick(JsonElement req)
     {
         var refStr = req.TryGetProperty("ref", out var r) ? r.GetString()?.Trim() : null;
+        double coordX = 0, coordY = 0;
+        var byCoord = req.TryGetProperty("x", out var xEl) && xEl.TryGetDouble(out coordX)
+                      && req.TryGetProperty("y", out var yEl) && yEl.TryGetDouble(out coordY);
+
+        // 按坐标点击：纯鼠标模拟，在视口 (x,y) 处 Move + Click，与是否有元素无关
+        if (byCoord)
+        {
+            if (!double.IsFinite(coordX) || !double.IsFinite(coordY))
+                throw new ArgumentException($"x and y must be finite numbers; got x={coordX}, y={coordY}");
+            var pg = await GetPageAsync().ConfigureAwait(false);
+            var fx = (float)coordX;
+            var fy = (float)coordY;
+            if (!float.IsFinite(fx) || !float.IsFinite(fy))
+                throw new ArgumentException($"x and y must be finite numbers; got x={coordX}, y={coordY}");
+            await pg.Mouse.MoveAsync(fx, fy).ConfigureAwait(false);
+            await pg.Mouse.ClickAsync(fx, fy).ConfigureAwait(false);
+            var (u, sn, rf) = await GetSnapshotDataAsync(req).ConfigureAwait(false);
+            return new { clicked = true, at = new { x = coordX, y = coordY }, url = u, snapshot = sn, refs = rf };
+        }
+
         if (string.IsNullOrEmpty(refStr))
-            throw new ArgumentException("ref required");
+            throw new ArgumentException("ref required, or --x and --y for coordinate click");
 
         if (!RefMap.TryGetValue(refStr, out var entry))
             throw new InvalidOperationException($"ref {refStr} not found; run snapshot first");
@@ -749,9 +803,50 @@ internal static class Program
             )
             .ConfigureAwait(false);
         var force = req.TryGetProperty("force", out var f) && f.GetBoolean();
-        await locator
-            .ClickAsync(new LocatorClickOptions { Timeout = 15_000, Force = force })
-            .ConfigureAwait(false);
+        // 先利用 Playwright 自带的 actionability 检查（试运行，不真正点击），再用视口坐标点击；
+        // 如果坐标点击失败，则回退到传统的 Locator.Click。
+        try
+        {
+            try
+            {
+                await locator
+                    .ClickAsync(
+                        new LocatorClickOptions
+                        {
+                            Timeout = 15_000,
+                            Force = force,
+                            Trial = true
+                        }
+                    )
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // 试运行失败时，不直接失败，继续尝试坐标点击。
+            }
+
+            var box = await locator.BoundingBoxAsync().ConfigureAwait(false);
+            if (box != null)
+            {
+                var x = box.X + box.Width / 2;
+                var y = box.Y + box.Height / 2;
+                await page.Mouse.MoveAsync(x, y).ConfigureAwait(false);
+                await page.Mouse.ClickAsync(x, y).ConfigureAwait(false);
+            }
+            else
+            {
+                await locator
+                    .ClickAsync(new LocatorClickOptions { Timeout = 15_000, Force = force })
+                    .ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // 最后一层保障，避免因为坐标点击失败而彻底不可用。
+            await locator
+                .ClickAsync(new LocatorClickOptions { Timeout = 15_000, Force = force })
+                .ConfigureAwait(false);
+        }
         var (url, snapshot, refs) = await GetSnapshotDataAsync(req).ConfigureAwait(false);
         return new { clicked = true, url, snapshot, refs };
     }
@@ -879,5 +974,95 @@ internal static class Program
             return new { tabs = list, switchedTo = switchIdx, url, snapshot, refs };
         }
         return new { tabs = list };
+    }
+
+    /// <summary>在当前页面上下文中执行任意 JS 表达式。</summary>
+    private static async Task<object?> CmdEval(JsonElement req)
+    {
+        var expr = req.TryGetProperty("expr", out var e) ? e.GetString() : null;
+        if (string.IsNullOrWhiteSpace(expr))
+            throw new ArgumentException("expr required");
+
+        var maxChars =
+            req.TryGetProperty("maxChars", out var m) && m.TryGetInt32(out var n)
+                ? Math.Clamp(n, 100, 50_000)
+                : 10_000;
+
+        var page = await GetPageAsync().ConfigureAwait(false);
+        object? result;
+        try
+        {
+            result = await page.EvaluateAsync<object?>(expr).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // 把 JS 执行错误包装返回，而不是让整个命令失败。
+            return new { error = ex.Message };
+        }
+
+        // 为避免 data 过大，这里先序列化一遍并截断，再反序列化回对象。
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        if (json.Length > maxChars)
+            json = json[..maxChars] + $"... [truncated {json.Length - maxChars} chars]";
+
+        return new { result = json };
+    }
+
+    /// <summary>按文本或角色搜索元素，返回匹配项及其中心坐标，便于后续用 click --x --y 点击。</summary>
+    private static async Task<object?> CmdFind(JsonElement req)
+    {
+        var text = req.TryGetProperty("text", out var t) ? t.GetString()?.Trim() : null;
+        var role = req.TryGetProperty("role", out var ro) ? ro.GetString()?.Trim() : null;
+        var limit = req.TryGetProperty("limit", out var lim) && lim.TryGetInt32(out var n)
+            ? Math.Clamp(n, 1, 50)
+            : 10;
+
+        if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(role))
+            throw new ArgumentException("find requires --text and/or --role");
+
+        var page = await GetPageAsync().ConfigureAwait(false);
+        ILocator locator;
+        if (!string.IsNullOrEmpty(role) && !string.IsNullOrEmpty(text))
+            locator = page.Locator($"role={role}").GetByText(text, new LocatorGetByTextOptions { Exact = false });
+        else if (!string.IsNullOrEmpty(text))
+            locator = page.GetByText(text, new PageGetByTextOptions { Exact = false });
+        else
+            locator = page.Locator($"role={role}");
+
+        var count = await locator.CountAsync().ConfigureAwait(false);
+        var take = Math.Min(count, limit);
+        var matches = new List<object>();
+        for (var i = 0; i < take; i++)
+        {
+            var el = locator.Nth(i);
+            var box = await el.BoundingBoxAsync().ConfigureAwait(false);
+            if (box == null)
+                continue;
+            var centerX = box.X + box.Width / 2;
+            var centerY = box.Y + box.Height / 2;
+            string? innerText = null;
+            try
+            {
+                innerText = await el.InnerTextAsync().ConfigureAwait(false);
+                if (innerText?.Length > 200)
+                    innerText = innerText[..200] + "...";
+            }
+            catch { /* 忽略无法取文本的情况 */
+            }
+
+            matches.Add(
+                new
+                {
+                    index = i,
+                    centerX,
+                    centerY,
+                    width = box.Width,
+                    height = box.Height,
+                    text = innerText
+                }
+            );
+        }
+
+        return new { count = matches.Count, total = count, matches };
     }
 }

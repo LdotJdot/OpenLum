@@ -67,6 +67,12 @@ internal static class CliParser
             case "init":
                 err = ParseInit(args, i, dict);
                 break;
+            case "eval":
+                err = ParseEval(args, i, dict);
+                break;
+            case "find":
+                err = ParseFind(args, i, dict);
+                break;
             case "quit":
                 break;
             default:
@@ -126,6 +132,16 @@ internal static class CliParser
                 dict["ref"] = args[++i];
                 i++;
             }
+            else if (args[i] == "--x" && i + 1 < args.Length && double.TryParse(args[i + 1], out var xv))
+            {
+                dict["x"] = xv;
+                i += 2;
+            }
+            else if (args[i] == "--y" && i + 1 < args.Length && double.TryParse(args[i + 1], out var yv))
+            {
+                dict["y"] = yv;
+                i += 2;
+            }
             else if (args[i] == "--force")
             {
                 dict["force"] = true;
@@ -134,7 +150,9 @@ internal static class CliParser
             else
                 i++;
         }
-        return dict.ContainsKey("ref") ? null : "click requires --ref";
+        var hasRef = dict.ContainsKey("ref");
+        var hasXY = dict.ContainsKey("x") && dict.ContainsKey("y");
+        return (hasRef || hasXY) ? null : "click requires --ref or --x and --y";
     }
 
     private static string? ParseType(string[] args, int i, Dictionary<string, object?> dict)
@@ -238,5 +256,52 @@ internal static class CliParser
                 i++;
         }
         return null;
+    }
+
+    private static string? ParseEval(string[] args, int i, Dictionary<string, object?> dict)
+    {
+        while (i < args.Length)
+        {
+            if (args[i] == "--expr" && i + 1 < args.Length)
+            {
+                dict["expr"] = args[++i];
+                i++;
+            }
+            else if (args[i] == "--maxChars" && i + 1 < args.Length && int.TryParse(args[i + 1], out var n))
+            {
+                dict["maxChars"] = n;
+                i += 2;
+            }
+            else
+            {
+                i++;
+            }
+        }
+        return dict.ContainsKey("expr") ? null : "eval requires --expr <JS_EXPRESSION>";
+    }
+
+    private static string? ParseFind(string[] args, int i, Dictionary<string, object?> dict)
+    {
+        while (i < args.Length)
+        {
+            if (args[i] == "--text" && i + 1 < args.Length)
+            {
+                dict["text"] = args[++i];
+                i++;
+            }
+            else if (args[i] == "--role" && i + 1 < args.Length)
+            {
+                dict["role"] = args[++i];
+                i++;
+            }
+            else if (args[i] == "--limit" && i + 1 < args.Length && int.TryParse(args[i + 1], out var n))
+            {
+                dict["limit"] = n;
+                i += 2;
+            }
+            else
+                i++;
+        }
+        return (dict.ContainsKey("text") || dict.ContainsKey("role")) ? null : "find requires --text and/or --role";
     }
 }

@@ -26,10 +26,21 @@ openlum-browser.exe [--headless] <command> [args]
 navigate --url <URL> --headless
 ```
 
-### snapshot — 获取页面结构
+### snapshot — 获取页面结构（经典模式：仅带 ref 的交互元素）
 ```
 snapshot [--maxChars N]
 ```
+> 仅列出可交互元素（button/link/textbox 等）并分配 ref，便于 click/type 使用。  
+> 推荐：**所有交互相关的决策（点哪里、在哪个控件输入）应优先通过 snapshot 完成。**
+
+### find — 按文本或角色搜索元素并返回坐标
+```
+find --text "<部分或完整文本>" [--role <角色名>] [--limit N]
+```
+> 用于**无 ref 时**定位元素：按可见文本或 ARIA 角色搜索，返回匹配项的中心坐标与边界框。  
+> 返回字段：`matches[].index`、`matches[].centerX`、`matches[].centerY`、`matches[].width`、`matches[].height`、`matches[].text`。  
+> 典型用法：先 `find --text "提交"` 得到 `centerX/centerY`，再 `click --x <centerX> --y <centerY>` 点击。  
+> `--role` 可选，如 `button`、`link`；`--limit` 默认 10，最大 50。
 
 ### type — 输入文本
 ```
@@ -39,12 +50,17 @@ type --ref <REF> --text <TEXT> [--submit]
 ### click — 点击元素
 ```
 click --ref <REF> [--force]
+click --x <X> --y <Y>
 ```
+> 两种方式二选一：**ref**（来自 snapshot）或 **坐标 x,y**（来自 find 的 centerX/centerY）。  
+> 坐标点击在页面内用 `elementFromPoint(x,y)` 取该点元素并触发 click，兼容 iframe 与覆盖层。
 
-### page_text — 提取页面纯文本
+### page_text — 提取页面纯文本（长文/兜底）
 ```
 page_text [--maxChars N]
 ```
+> 仅用于**阅读大量文本内容**或在 snapshot 中找不到某段文字时做兜底排查。
+> **不要直接依赖 page_text 去“猜”要点哪个元素**，page_text 不包含 ref，无法直接交互。
 
 ### upload — 上传文件（路径为绝对路径或相对当前工作目录）
 ```
@@ -55,6 +71,13 @@ upload --ref <REF> --paths <path1> [path2...]
 ```
 tabs [--switch N]
 ```
+
+### eval — 在页面中执行 JS
+```
+eval --expr "<JS 表达式>" [--maxChars N]
+```
+> 注意：`expr` 是一个 JS 表达式，例如 `() => window.location.href` 或
+> `() => ({ title: document.title, href: location.href })`。返回值会被序列化为 JSON 字符串并截断到 `maxChars`。
 
 ### quit — 退出
 ```
@@ -77,6 +100,10 @@ quit
 # 无头模式打开
 & "skills/webbrowser/browser/openlum-browser.exe" --headless navigate --url "https://example.com"
 
+# 按文本查找再按坐标点击（无 ref 时）
+& "skills/webbrowser/browser/openlum-browser.exe" find --text "提交" --limit 5
+& "skills/webbrowser/browser/openlum-browser.exe" click --x 125 --y 212
+
 # 退出（关闭浏览器，失去当前上下文）
 & "skills/webbrowser/browser/openlum-browser.exe" quit
 ```
@@ -91,7 +118,17 @@ quit
 
 ## 典型流程
 
+### 交互优先走 snapshot；无 ref 时用 find + 坐标点击
+
 1. `navigate --url https://cn.bing.com` → 返回 snapshot 和 refs
-2. 从 snapshot 找到搜索框 ref
-3. `type --ref N --text "关键词" --submit` → 返回新页面 snapshot
-4. 新标签页时 `tabs --switch 1` 切换后再操作
+2. 从 snapshot 中找目标控件对应的 `ref`，用 `click --ref <REF>` / `type --ref <REF> ...` 操作
+3. 若目标在 snapshot 中无 ref（如静态文案、非标准控件），用 **find** 定位：
+   - `find --text "提交"` 或 `find --text "确定" --role button` → 得到 `matches[].centerX/centerY`
+   - `click --x <centerX> --y <centerY>` 点击该位置
+4. 如出现新标签页，用 `tabs --switch N` 切换后继续以上步骤
+
+### 需要读取大量文本或 snapshot 中找不到某段文字时
+
+1. 先 `snapshot`，尝试在 snapshot 中搜索关键字；若能找到，继续按 ref 交互
+2. 若 snapshot 中完全找不到该文字，再调用 `page_text` 获取更多纯文本内容（只用于阅读和排查）
+3. 如确认是页面可访问性不足，可配合 `eval` 在 DOM 中按文本/选择器查找并操作元素
