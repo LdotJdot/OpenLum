@@ -1,6 +1,6 @@
 ---
-name: deepThink
-description: "通用问题诊断与深度分析 Skill。适用于代码、系统、业务、学习规划等需要严肃推理和可执行结论的任务。"
+name: deep-think
+description: "Diagnoses and deeply analyzes problems across code, systems, business logic, learning plans, and career decisions. Use when: debugging errors, designing architectures, analyzing complex requirements, planning learning paths, or making technical trade-off decisions. Produces structured conclusions with evidence-backed reasoning, hypothesis testing via available tools, and immediately actionable next steps."
 ---
 
 # DeepThink Skill（通用深度诊断）
