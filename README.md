@@ -10,8 +10,15 @@
 
 ### Features
 
-- **Agent loop** — ReAct-style loop, tool calling, streaming
-- **Tools** — `read`, `write`, `list_dir`, `exec`, `memory_get`, `memory_search`, `sessions_spawn`
+- **Agent loop** — ReAct-style loop, tool calling, streaming, with configurable tool-turn limits and “model decide at limit”.
+- **Native tools (Tier-1)** — Optimized for code/text workflows:
+  - File & edit: `read`, `read_many`, `write`, `str_replace`, `list_dir`, `todo`, `submit_plan`
+  - Search: `grep`, `glob`, `semantic_search` (v0 heuristic)
+  - Runtime: `exec`
+  - Memory: `memory_get`, `memory_search`
+  - Sub-agents: `sessions_spawn`
+- **Search → Read → Edit workflow** — Encourages `glob/semantic_search` → `grep` → `read(offset/limit)` → `str_replace` / `write`, with read-like tools executed in parallel for speed.
+- **Workflow phases (optional)** — Observable / Act / Verify phases with per-phase tool allowlists and optional “plan required before writes”.
 - **Skills** — External skills from `Skills/` (see [Skill execution](#skill-execution-extension))
 - **Session compaction** — Optional context summarization
 - **Model** — OpenAI API–compatible (OpenAI, DeepSeek, Ollama, etc.)
@@ -111,8 +118,15 @@ Load order: `openlum.json` → `openlum.console.json` → `appsettings.json`.
 | `compaction.enabled` | Enable compaction |
 | `compaction.maxMessagesBeforeCompact` | Messages before compact |
 | `compaction.reserveRecent` | Messages to keep after compact |
+| `compaction.maxToolResultChars` | Max chars from a single tool result kept in history |
+| `compaction.maxFailedToolResultChars` | Max chars for failed tool results when sending to model |
 | `tools.profile` | `minimal` \| `coding` \| `messaging` \| `local` \| `full` |
 | `tools.allow` / `tools.deny` | Tool or group names |
+| `workflow.enabled` | Enable Observe/Act/Verify workflow phases |
+| `workflow.requirePlanForWrite` | When true, writes are gated behind a submitted plan or TODOs in Observe phase |
+| `workflow.autoVerifyAfterFirstWrite` | Auto-switch to Verify phase after first write-like tool |
+| `search.skipDirs` | Extra directory names to skip when scanning (on top of defaults like `.git`, `bin`, `obj`) |
+| `search.skipGlobs` | Globs of paths to skip when scanning (matched against relative path) |
 
 Env overrides: `OPENLUM_PROVIDER`, `OPENLUM_MODEL`, `OPENLUM_BASE_URL`, `OPENLUM_API_KEY`. Strict config: `OPENLUM_STRICT_CONFIG=1`.
 
@@ -152,9 +166,16 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 
 ### 功能
 
-- **Agent 循环** — ReAct 风格循环、工具调用、流式输出
-- **工具** — `read`、`write`、`list_dir`、`exec`、`memory_get`、`memory_search`、`sessions_spawn`
-- **技能** — 从 `Skills/` 加载外部技能（见 [Skill 执行扩展](#skill-执行扩展)）
+- **Agent 循环** — ReAct 风格循环、工具调用、流式输出，支持可配置的工具调用轮数与“由模型在上限时决策”。
+- **原生工具（Tier-1）** — 针对代码/文本场景做了窄接口优化：
+  - 文件与编辑：`read`、`read_many`、`write`、`str_replace`、`list_dir`、`todo`、`submit_plan`
+  - 搜索：`grep`、`glob`、`semantic_search`（v0 启发式语义检索）
+  - 运行：`exec`
+  - 记忆：`memory_get`、`memory_search`
+  - 子会话：`sessions_spawn`
+- **Search → Read → Edit 工作流** — 鼓励 `glob/semantic_search` → `grep` → `read(offset/limit)` → `str_replace` / `write` 的模式，read 类工具一轮内可并行执行以降低总耗时。
+- **可选阶段工作流** — Observe / Act / Verify 阶段化暴露工具，可配置“写操作前必须先提交计划/维护 TODO 列表”。
+- **技能（Skills）** — 从 `Skills/` 加载外部能力（见 [Skill 执行扩展](#skill-执行扩展)）
 - **会话压缩** — 可选上下文摘要
 - **模型** — 兼容 OpenAI API（OpenAI、DeepSeek、Ollama 等）
 - **工具策略** — 按 profile 与 allow/deny 控制
@@ -253,8 +274,15 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 | `compaction.enabled` | 是否启用压缩 |
 | `compaction.maxMessagesBeforeCompact` | 压缩前消息数 |
 | `compaction.reserveRecent` | 压缩后保留消息数 |
+| `compaction.maxToolResultChars` | 单次工具结果在会话中保留的最大字符数 |
+| `compaction.maxFailedToolResultChars` | 发送给模型时，失败工具结果的最大字符数 |
 | `tools.profile` | `minimal` / `coding` / `messaging` / `local` / `full` |
 | `tools.allow` / `tools.deny` | 工具名或组名 |
+| `workflow.enabled` | 是否启用 Observe/Act/Verify 阶段化工作流 |
+| `workflow.requirePlanForWrite` | 为 true 时，在 Observe 阶段写操作需先提交计划或维护 TODO 列表 |
+| `workflow.autoVerifyAfterFirstWrite` | 为 true 时，首次写操作后自动进入 Verify 阶段 |
+| `search.skipDirs` | 额外需要在扫描时跳过的目录名（叠加 `.git`、`bin`、`obj` 等默认值） |
+| `search.skipGlobs` | 扫描时需要跳过的相对路径 glob |
 
 环境变量覆盖：`OPENLUM_PROVIDER`、`OPENLUM_MODEL`、`OPENLUM_BASE_URL`、`OPENLUM_API_KEY`。严格模式：`OPENLUM_STRICT_CONFIG=1`。
 
