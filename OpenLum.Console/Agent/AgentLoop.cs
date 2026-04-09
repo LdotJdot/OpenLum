@@ -10,18 +10,11 @@ namespace OpenLum.Console.Agent;
 /// </summary>
 public sealed class AgentLoop : IAgent
 {
-    /// <summary>
-    /// Prepended to every user instruction: simple, direct questions can be answered直接; non-trivial tasks should still think first.
-    /// </summary>
-    private const string IntentPromptPrefix =
-        "[思考策略：对于非常简单、明确的小问题，可以直接给出简洁答案；" +
-        "对于稍微复杂、模糊、多步骤或存在不确定性的任务，请先想清 1. 用户真正想要什么 2. 需要弄清哪些条件，再动手解决，禁止先执行再纠错。]\n\n";
-
+    // Intent/thinking strategy is now in SystemPromptBuilder's "## Execution Process" section
+    // to avoid redundant tokens between system prompt and every user message.
     private static string WrapUserInstruction(string userPrompt)
     {
-        var content = (userPrompt ?? "").Trim();
-        if (content.Length == 0) return IntentPromptPrefix.Trim();
-        return IntentPromptPrefix + content;
+        return (userPrompt ?? "").Trim();
     }
     private readonly IModelProvider _model;
     private readonly IToolRegistry _tools;
@@ -109,13 +102,7 @@ public sealed class AgentLoop : IAgent
             }
 
             _session.AddAssistant(response.Content, response.ToolCalls);
-            var results = new List<ToolResult>();
-            foreach (var tc in response.ToolCalls)
-            {
-                _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
-                var result = await ExecuteToolAsync(tc, ct);
-                results.Add(result);
-            }
+            var results = await ExecuteToolCallsAsync(response.ToolCalls, ct);
             _session.AddToolResults(results);
         }
 
@@ -170,12 +157,8 @@ public sealed class AgentLoop : IAgent
         if (content.Contains("[DECISION:CONTINUE]", StringComparison.OrdinalIgnoreCase) && decision.ToolCalls.Count > 0)
         {
             _session.AddAssistant(decision.Content, decision.ToolCalls);
-            foreach (var tc in decision.ToolCalls)
-            {
-                _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
-                var result = await ExecuteToolAsync(tc, ct);
-                _session.AddToolResults([result]);
-            }
+            var limitResults = await ExecuteToolCallsAsync(decision.ToolCalls, ct);
+            _session.AddToolResults(limitResults);
             _session.Add(new ChatMessage
             {
                 Role = MessageRole.User,
@@ -250,6 +233,52 @@ public sealed class AgentLoop : IAgent
                 list.Add(m);
         }
         return list;
+    }
+
+    /// <summary>Tools considered safe to run in parallel (read-only, no side effects).</summary>
+    private static readonly HashSet<string> ReadLikeTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "read", "list_dir", "grep", "glob", "memory_get", "memory_search"
+    };
+
+    /// <summary>
+    /// Execute tool calls with parallelism: read-like tools run concurrently;
+    /// write-like/exec/spawn tools run sequentially to avoid conflicts.
+    /// Order of results matches order of tool calls.
+    /// </summary>
+    private async Task<List<ToolResult>> ExecuteToolCallsAsync(IReadOnlyList<ToolCall> toolCalls, CancellationToken ct)
+    {
+        if (toolCalls.Count <= 1)
+        {
+            var results = new List<ToolResult>(1);
+            foreach (var tc in toolCalls)
+            {
+                _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
+                results.Add(await ExecuteToolAsync(tc, ct));
+            }
+            return results;
+        }
+
+        var allReadLike = toolCalls.All(tc => ReadLikeTools.Contains(tc.Name));
+
+        if (allReadLike)
+        {
+            foreach (var tc in toolCalls)
+                _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
+
+            var tasks = toolCalls.Select(tc => ExecuteToolAsync(tc, ct)).ToArray();
+            var completed = await Task.WhenAll(tasks);
+            return [.. completed];
+        }
+
+        // Mixed batch: run sequentially (safe default)
+        var sequential = new List<ToolResult>(toolCalls.Count);
+        foreach (var tc in toolCalls)
+        {
+            _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
+            sequential.Add(await ExecuteToolAsync(tc, ct));
+        }
+        return sequential;
     }
 
     private async Task<ToolResult> ExecuteToolAsync(ToolCall tc, CancellationToken ct)

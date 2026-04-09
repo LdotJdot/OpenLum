@@ -9,7 +9,8 @@ public static class ToolProfiles
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> Groups { get; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["group:fs"] = ["read", "write", "list_dir"],
+            ["group:fs"] = ["read", "write", "str_replace", "list_dir"],
+            ["group:search"] = ["grep", "glob"],
             ["group:web"] = ["browser_navigate", "browser_snapshot", "browser_tabs", "browser_click", "browser_type", "browser_page_text", "browser_screenshot", "browser_upload"],
             ["group:runtime"] = ["exec"],
             ["group:memory"] = ["memory_get", "memory_search"],
@@ -21,10 +22,10 @@ public static class ToolProfiles
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
         {
             ["minimal"] = ["list_dir"],
-            ["coding"] = ["group:fs", "group:web", "group:runtime"],
+            ["coding"] = ["group:fs", "group:search", "group:web", "group:runtime"],
             ["messaging"] = ["list_dir"],
-            ["local"] = ["group:fs", "group:web", "group:runtime", "group:memory", "group:sessions"],
-            ["full"] = ["group:fs", "group:web", "group:runtime", "group:memory", "group:sessions"]
+            ["local"] = ["group:fs", "group:search", "group:web", "group:runtime", "group:memory", "group:sessions"],
+            ["full"] = ["group:fs", "group:search", "group:web", "group:runtime", "group:memory", "group:sessions"]
         };
 
     /// <summary>Expands group names to concrete tool names.</summary>

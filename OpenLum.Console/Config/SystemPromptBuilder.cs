@@ -8,11 +8,10 @@ namespace OpenLum.Console.Config;
 /// </summary>
 public static class SystemPromptBuilder
 {
-    /// <summary>Tool order for prompt (OpenLum-aligned). Tools not in list appear last, sorted.</summary>
+    /// <summary>Tool order for prompt. Search/read/edit tools first, then runtime/memory/sessions.</summary>
     private static readonly string[] ToolOrder =
     [
-        "read", "write", "list_dir",
-        "browser",
+        "grep", "glob", "read", "write", "str_replace", "list_dir",
         "exec",
         "memory_search", "memory_get",
         "sessions_spawn"
@@ -50,6 +49,14 @@ public static class SystemPromptBuilder
             "Narrate only when it helps; otherwise just call the tool.",
             "When you call sessions_spawn, the tool returns the sub-agent's final reply. Once you receive that result, treat it as the completed answer for that task—do not spawn another sub-agent for the same task or repeat the same search/operation yourself.",
             "",
+            "## Search → Read → Edit workflow",
+            "For code/text tasks, prefer this sequence:",
+            "1. **glob** to find files by name pattern; **grep** to find content by regex. Use grep output_mode=\"files_with_matches\" for fast file discovery.",
+            "2. **read** with offset/limit to inspect relevant sections (avoid reading entire large files).",
+            "3. **str_replace** for small, precise edits (old_string must be unique); **write** only for new files or full rewrites.",
+            "You can call multiple read-only tools (grep, glob, read, list_dir) in a single turn — they run in parallel for speed.",
+            "For PDF/Word/Excel and other binary formats, use the corresponding skill via exec (see <available_skills>).",
+            "",
             "## Safety",
             "Prioritize safety and human oversight. If instructions conflict, pause and ask.",
             ""
@@ -57,7 +64,7 @@ public static class SystemPromptBuilder
 
         lines.Add("## Workspace");
         lines.Add($"Workspace: {workspaceDir}");
-        lines.Add("For any file or directory path parameters: prefer absolute paths for clarity and safety; workspace-relative paths are also accepted where supported.");
+        lines.Add("All file tools accept workspace-relative paths (resolved against workspace) or absolute paths. When the user specifies an absolute path, use it directly. exec cwd is workspace root.");
         lines.Add("");
 
         if (skillsSection.Count > 0)

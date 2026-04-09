@@ -1,62 +1,48 @@
 using System.Text;
-using System.Text.Json;
 using OpenLum.Console.Interfaces;
+using OpenLum.Console.IO;
+using static OpenLum.Console.Tools.ToolArgHelpers;
 
 namespace OpenLum.Console.Tools;
 
 /// <summary>
-/// Reads plain text file contents from the workspace. For Office/PDF/CAD files, use the read skill exes via exec (read-docx.exe, read-pdf.exe, etc.).
+/// Reads plain text file contents from the workspace. For Office/PDF/CAD files, use the read skill exes via exec.
 /// Also allows reading from skill directories (for loading SKILL.md on demand).
 /// </summary>
 public sealed class ReadTool : ITool
 {
-    private readonly string _workspaceDir;
-    private readonly string[] _extraReadRoots;
+    private readonly WorkspacePathResolver _resolver;
+
+    public ReadTool(WorkspacePathResolver resolver) => _resolver = resolver;
 
     public ReadTool(string workspaceDir, IReadOnlyList<string>? extraReadRoots = null)
-    {
-        _workspaceDir = Path.GetFullPath(workspaceDir);
-        _extraReadRoots = extraReadRoots != null
-            ? extraReadRoots.Select(Path.GetFullPath).Where(Directory.Exists).ToArray()
-            : [];
-    }
+        : this(new WorkspacePathResolver(workspaceDir, extraReadRoots)) { }
 
     public string Name => "read";
-    public string Description => "PowerShell-style: like Get-Content. Read plain text (txt, md, json). For PDF/Office/CAD: exec skills/read/<format>/read-<format>.exe path --start 0 --limit N.";
+
+    public string Description =>
+        "Read a plain-text file (source code, txt, md, json, etc.). " +
+        "For PDF/Office/CAD, use the corresponding skill via exec. " +
+        "Path: workspace-relative or any absolute path. Supports ~.";
+
     public IReadOnlyList<ToolParameter> Parameters =>
     [
-        new ToolParameter("path", "string", "Path (workspace-relative or absolute; supports ~). Like Get-Content -Path.", true),
-        new ToolParameter("limit", "number", "Max lines (default 200, max 2000). Like Get-Content -TotalCount.", false)
+        new ToolParameter("path", "string", "File path (workspace-relative or absolute; supports ~).", true),
+        new ToolParameter("offset", "number", "1-based start line (default 1). Negative values count from end.", false),
+        new ToolParameter("limit", "number", "Max lines to return (default 200, max 2000).", false)
     ];
 
     public Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
     {
-        var path = args.GetValueOrDefault("path")?.ToString()?.Trim();
-        if (string.IsNullOrWhiteSpace(path))
-            return Task.FromResult("Error: path is required.");
+        var pathArg = args.GetValueOrDefault("path")?.ToString()?.Trim();
+        var res = _resolver.ResolveExistingFile(pathArg);
+        if (!res.IsOk)
+            return Task.FromResult(res.Error!);
 
-        var expandedPath = ExpandPath(path);
-        var fullPath = Path.IsPathRooted(expandedPath)
-            ? Path.GetFullPath(expandedPath)
-            : Path.GetFullPath(Path.Combine(_workspaceDir, expandedPath.TrimStart('/', '\\')));
-        if (!IsPathAllowed(fullPath))
-            return Task.FromResult($"Error: path is outside workspace or skill directories ({_workspaceDir}).");
+        var fullPath = res.FullPath!;
 
-        if (!File.Exists(fullPath))
-            return Task.FromResult($"Error: file not found: {path}");
-
-        var limit = 200;
-        if (args.TryGetValue("limit", out var limitVal))
-        {
-            var n = limitVal switch
-            {
-                JsonElement je when je.TryGetInt32(out var i) => i,
-                long l => (int)l,
-                int i => i,
-                _ => 0
-            };
-            if (n > 0) limit = Math.Min(n, 2000);
-        }
+        var limit = ParseInt(args, "limit", 200, 1, 2000, zeroMeansDefault: true);
+        var offset = ParseInt(args, "offset", 1);
 
         string[] lines;
         try
@@ -65,7 +51,8 @@ public sealed class ReadTool : ITool
         }
         catch (Exception ex)
         {
-            return Task.FromResult($"Error reading file: {ex.Message}. For Office/PDF/CAD, use exec with read-docx.exe, read-pdf.exe etc. from Skills/read.");
+            return Task.FromResult(
+                $"Error reading file: {ex.Message}. For Office/PDF/CAD, use exec with the corresponding skill exe.");
         }
 
         if (IsSkillFile(fullPath))
@@ -74,39 +61,24 @@ public sealed class ReadTool : ITool
             LogSkillLoaded(skillName, fullPath);
         }
 
-        var take = Math.Min(lines.Length, limit);
+        int startIdx;
+        if (offset < 0)
+            startIdx = Math.Max(0, lines.Length + offset);
+        else
+            startIdx = Math.Max(0, offset - 1);
+
+        var take = Math.Min(lines.Length - startIdx, limit);
+        if (take <= 0)
+            return Task.FromResult($"(file has {lines.Length} lines; requested range is empty)");
+
         var sb = new StringBuilder();
-        for (var i = 0; i < take; i++)
-            sb.AppendLine(lines[i]);
-        if (lines.Length > limit)
-            sb.AppendLine($"... [{lines.Length - limit} more lines]");
+        for (var i = startIdx; i < startIdx + take; i++)
+            sb.AppendLine($"{i + 1,6}|{lines[i]}");
+
+        if (startIdx + take < lines.Length)
+            sb.AppendLine($"... [{lines.Length - startIdx - take} more lines, {lines.Length} total]");
 
         return Task.FromResult(sb.ToString());
-    }
-
-    private static string ExpandPath(string path)
-    {
-        if (path.Length == 0) return path;
-        if (path == "~") return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) ?? path;
-        if ((path.StartsWith("~/") || path.StartsWith("~\\")))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!string.IsNullOrEmpty(home))
-                return Path.Combine(home, path[2..].Replace('/', Path.DirectorySeparatorChar));
-        }
-        return path;
-    }
-
-    private bool IsPathAllowed(string fullPath)
-    {
-        if (fullPath.StartsWith(_workspaceDir, StringComparison.OrdinalIgnoreCase))
-            return true;
-        foreach (var root in _extraReadRoots)
-        {
-            if (fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
     }
 
     private static bool IsSkillFile(string fullPath)

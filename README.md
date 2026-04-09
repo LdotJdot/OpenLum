@@ -26,6 +26,10 @@
 | **OpenLum.Core** | Shared library |
 | **OpenLum.Tests** | Unit tests |
 
+### Documentation
+
+- **[Agent efficiency & tooling roadmap](docs/AGENT_EFFICIENCY_ROADMAP.md)** — Architecture and implementation plan for native tools (grep, str_replace, path resolution, Skill fusion, parallel execution).
+
 ### Browser automation
 
 Browser actions (open, snapshot, click, type, screenshot, etc.) are provided by the **agent-browser** skill: the agent uses the `exec` tool to run the [agent-browser](https://agent-browser.dev/commands) CLI. Install it locally (e.g. `npm i -g @agent-browser/cli` or per-project) and ensure `agent-browser` is on PATH. The old **OpenLum.Browser** (Playwright) is no longer used by the console; it remains in the repo as an optional/legacy component.
@@ -163,6 +167,10 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 | **OpenLum.Browser** | 旧版 Playwright 浏览器（可选）。**浏览器自动化已改为 agent-browser 技能**（见下）。 |
 | **OpenLum.Core** | 公共库 |
 | **OpenLum.Tests** | 单元测试 |
+
+### 文档
+
+- **[智能体效率与工具面路线图](docs/AGENT_EFFICIENCY_ROADMAP.md)** — 原生工具、路径统一解析、Skill 融合与并行调度等设计与实施清单。
 
 ### 浏览器自动化
 

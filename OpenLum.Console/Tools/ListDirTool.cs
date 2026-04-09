@@ -1,4 +1,5 @@
 using OpenLum.Console.Interfaces;
+using OpenLum.Console.IO;
 
 namespace OpenLum.Console.Tools;
 
@@ -7,29 +8,32 @@ namespace OpenLum.Console.Tools;
 /// </summary>
 public sealed class ListDirTool : ITool
 {
-    private readonly string _workspaceDir;
+    private readonly WorkspacePathResolver _resolver;
 
-    public ListDirTool(string workspaceDir)
-    {
-        _workspaceDir = Path.GetFullPath(workspaceDir);
-    }
+    public ListDirTool(WorkspacePathResolver resolver) => _resolver = resolver;
+
+    public ListDirTool(string workspaceDir) : this(new WorkspacePathResolver(workspaceDir)) { }
 
     public string Name => "list_dir";
-    public string Description => "PowerShell-style: like Get-ChildItem. List files and subdirectories. Prefer absolute paths for directory arguments; workspace-relative paths are also accepted.";
+
+    public string Description =>
+        "List files and subdirectories. Path defaults to workspace root; any absolute path is also accepted.";
+
     public IReadOnlyList<ToolParameter> Parameters =>
     [
-        new ToolParameter("path", "string", "Directory path (default: .). Prefer absolute paths; workspace-relative is also supported. Like Get-ChildItem -Path.", false)
+        new ToolParameter("path", "string", "Directory path (workspace-relative or absolute; default: workspace root).", false)
     ];
 
     public Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
     {
-        var path = args.GetValueOrDefault("path")?.ToString()?.Trim() ?? ".";
-        var fullPath = Path.IsPathRooted(path)
-            ? Path.GetFullPath(path)
-            : Path.GetFullPath(Path.Combine(_workspaceDir, path.TrimStart('/', '\\')));
+        var pathArg = args.GetValueOrDefault("path")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(pathArg)) pathArg = ".";
 
-        if (!Directory.Exists(fullPath))
-            return Task.FromResult($"Error: directory not found: {path}");
+        var res = _resolver.ResolveExistingDirectory(pathArg);
+        if (!res.IsOk)
+            return Task.FromResult(res.Error!);
+
+        var fullPath = res.FullPath!;
 
         var entries = Directory.GetFileSystemEntries(fullPath)
             .Select(p => new FileSystemInfoWrapper(p))

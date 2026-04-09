@@ -3,6 +3,7 @@ using OpenLum.Console.Compaction;
 using OpenLum.Console.Config;
 using OpenLum.Console.Console;
 using OpenLum.Console.Interfaces;
+using OpenLum.Console.IO;
 using OpenLum.Console.Providers;
 using OpenLum.Console.Session;
 using OpenLum.Console.Tools;
@@ -34,10 +35,15 @@ public sealed class Application
             return 1;
         }
 
+        var resolver = new WorkspacePathResolver(workspaceDir, SkillLoader.GetSkillRoots(workspaceDir));
+
         var baseTools = new ToolRegistry();
-        baseTools.Register(new ReadTool(workspaceDir, SkillLoader.GetSkillRoots(workspaceDir)));
-        baseTools.Register(new WriteTool(workspaceDir));
-        baseTools.Register(new ListDirTool(workspaceDir));
+        baseTools.Register(new ReadTool(resolver));
+        baseTools.Register(new WriteTool(resolver));
+        baseTools.Register(new StrReplaceTool(resolver));
+        baseTools.Register(new ListDirTool(resolver));
+        baseTools.Register(new GrepTool(resolver));
+        baseTools.Register(new GlobTool(resolver));
         baseTools.Register(new ExecTool(workspaceDir));
         baseTools.Register(new MemoryGetTool(workspaceDir));
         baseTools.Register(new MemorySearchTool(workspaceDir));
