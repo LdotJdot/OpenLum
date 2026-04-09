@@ -1,4 +1,5 @@
 using System.Text.Json;
+using OpenLum.Console.Config;
 using OpenLum.Console.Compaction;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.Models;
@@ -17,15 +18,27 @@ public sealed class AgentLoop : IAgent
         return (userPrompt ?? "").Trim();
     }
     private readonly IModelProvider _model;
-    private readonly IToolRegistry _tools;
+    private readonly IToolRegistry _toolsBase;
     private readonly ISession _session;
     private readonly string _systemPrompt;
     private readonly SessionCompactor? _compactor;
+    private readonly Tools.TodoStore? _todoStore;
+    private readonly Tools.PlanStore? _planStore;
+    private readonly WorkflowConfig _workflow;
     private readonly Action<string, string>? _onToolExecuting;
     private readonly int? _maxToolResultChars;
     private readonly int? _maxFailedToolResultChars;
     private readonly int _maxToolTurns;
     private readonly bool _useModelDecideAtLimit;
+
+    private enum WorkflowPhase
+    {
+        Observe,
+        Act,
+        Verify
+    }
+
+    private WorkflowPhase _phase = WorkflowPhase.Act;
 
     public AgentLoop(
         IModelProvider model,
@@ -33,6 +46,9 @@ public sealed class AgentLoop : IAgent
         ISession session,
         string systemPrompt,
         SessionCompactor? compactor = null,
+        Tools.TodoStore? todoStore = null,
+        Tools.PlanStore? planStore = null,
+        WorkflowConfig? workflow = null,
         Action<string, string>? onToolExecuting = null,
         int? maxToolResultChars = null,
         int? maxFailedToolResultChars = null,
@@ -40,10 +56,13 @@ public sealed class AgentLoop : IAgent
         bool useModelDecideAtLimit = true)
     {
         _model = model;
-        _tools = tools;
+        _toolsBase = tools;
         _session = session;
         _systemPrompt = systemPrompt;
         _compactor = compactor;
+        _todoStore = todoStore;
+        _planStore = planStore;
+        _workflow = workflow ?? new WorkflowConfig();
         _onToolExecuting = onToolExecuting;
         _maxToolResultChars = maxToolResultChars;
         _maxFailedToolResultChars = maxFailedToolResultChars;
@@ -56,6 +75,7 @@ public sealed class AgentLoop : IAgent
         IProgress<string>? contentProgress,
         CancellationToken ct = default)
     {
+        ResetWorkflowForNewUserMessage();
         _session.Add(new ChatMessage { Role = MessageRole.User, Content = WrapUserInstruction(userPrompt) });
 
         var maxTurns = _maxToolTurns;
@@ -68,9 +88,12 @@ public sealed class AgentLoop : IAgent
                 await c.CompactIfNeededAsync(cs, ct);
             }
 
+            MaybePromoteObserveToAct();
+
             var remaining = maxTurns - turn;
             var messages = BuildMessages(remaining <= warningAt ? remaining : null);
-            var toolDefs = _tools.All.Select(t => new ToolDefinition(
+            var toolsForTurn = GetToolsForCurrentPhase();
+            var toolDefs = toolsForTurn.All.Select(t => new ToolDefinition(
                 t.Name,
                 t.Description,
                 t.Parameters
@@ -130,7 +153,8 @@ public sealed class AgentLoop : IAgent
                 """
         });
 
-        var toolDefs = _tools.All.Select(t => new ToolDefinition(t.Name, t.Description, t.Parameters)).ToList();
+        var toolsForTurn = GetToolsForCurrentPhase();
+        var toolDefs = toolsForTurn.All.Select(t => new ToolDefinition(t.Name, t.Description, t.Parameters)).ToList();
         ModelResponse decision;
         try
         {
@@ -209,6 +233,25 @@ public sealed class AgentLoop : IAgent
     private List<ChatMessage> BuildMessages(int? warningTurnsRemaining)
     {
         var sys = _systemPrompt;
+
+        if (_todoStore is { HasItems: true })
+            sys += _todoStore.FormatForPrompt();
+
+        if (_planStore is { HasPlan: true })
+            sys += _planStore.FormatForPrompt();
+
+        if (_workflow.Enabled)
+        {
+            sys += "\n\n[Workflow] ";
+            sys += _phase switch
+            {
+                WorkflowPhase.Observe => "Phase=OBSERVE. Use grep/glob/read/read_many/list_dir to gather context. Submit a short plan via submit_plan (or create TODOs) before using write-like tools.",
+                WorkflowPhase.Act => "Phase=ACT. You may edit files (prefer str_replace for small precise edits).",
+                WorkflowPhase.Verify => "Phase=VERIFY. Prefer read/grep/glob and (optionally) exec build/verify commands; avoid further edits unless necessary.",
+                _ => "Phase=ACT."
+            };
+        }
+
         if (warningTurnsRemaining is { } n && n <= 3)
         {
             sys += $"\n\n[Important: 剩余{n}轮工具调用。如已有足够信息，请优先总结并回答用户。]";
@@ -238,7 +281,7 @@ public sealed class AgentLoop : IAgent
     /// <summary>Tools considered safe to run in parallel (read-only, no side effects).</summary>
     private static readonly HashSet<string> ReadLikeTools = new(StringComparer.OrdinalIgnoreCase)
     {
-        "read", "list_dir", "grep", "glob", "memory_get", "memory_search"
+        "read", "read_many", "list_dir", "grep", "glob", "memory_get", "memory_search"
     };
 
     /// <summary>
@@ -250,48 +293,75 @@ public sealed class AgentLoop : IAgent
     {
         if (toolCalls.Count <= 1)
         {
-            var results = new List<ToolResult>(1);
+            var singleResults = new List<ToolResult>(1);
             foreach (var tc in toolCalls)
             {
                 _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
-                results.Add(await ExecuteToolAsync(tc, ct));
+                singleResults.Add(await ExecuteToolAsync(tc, ct));
             }
-            return results;
+            return singleResults;
         }
 
-        var allReadLike = toolCalls.All(tc => ReadLikeTools.Contains(tc.Name));
-
-        if (allReadLike)
+        // Mixed batch: run read-like tools in parallel when safe, but preserve overall ordering.
+        // Rule: If a tool earlier in the list can have side effects (non-read-like), we do not
+        // run any later tools ahead of it.
+        //
+        // This keeps behavior predictable while still speeding up common patterns like:
+        //   grep/read/list_dir ... then write/exec.
+        var results = new ToolResult[toolCalls.Count];
+        var i = 0;
+        while (i < toolCalls.Count)
         {
-            foreach (var tc in toolCalls)
+            if (!ReadLikeTools.Contains(toolCalls[i].Name))
+            {
+                var tc = toolCalls[i];
                 _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
+                results[i] = await ExecuteToolAsync(tc, ct);
+                i++;
+                continue;
+            }
 
-            var tasks = toolCalls.Select(tc => ExecuteToolAsync(tc, ct)).ToArray();
+            // Batch consecutive read-like calls.
+            var start = i;
+            while (i < toolCalls.Count && ReadLikeTools.Contains(toolCalls[i].Name))
+                i++;
+            var end = i; // exclusive
+
+            for (var j = start; j < end; j++)
+                _onToolExecuting?.Invoke(toolCalls[j].Name, toolCalls[j].Arguments);
+
+            var tasks = new Task<ToolResult>[end - start];
+            for (var j = start; j < end; j++)
+            {
+                var index = j;
+                tasks[index - start] = ExecuteToolAsync(toolCalls[index], ct);
+            }
+
             var completed = await Task.WhenAll(tasks);
-            return [.. completed];
+            for (var k = 0; k < completed.Length; k++)
+                results[start + k] = completed[k];
         }
 
-        // Mixed batch: run sequentially (safe default)
-        var sequential = new List<ToolResult>(toolCalls.Count);
-        foreach (var tc in toolCalls)
-        {
-            _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
-            sequential.Add(await ExecuteToolAsync(tc, ct));
-        }
-        return sequential;
+        return [.. results];
     }
 
     private async Task<ToolResult> ExecuteToolAsync(ToolCall tc, CancellationToken ct)
     {
-        var tool = _tools.Get(tc.Name);
-        if (tool is null)
+        if (!IsToolAllowedInCurrentPhase(tc.Name))
         {
             return new ToolResult
             {
                 ToolCallId = tc.Id,
-                Content = $"Error: unknown tool '{tc.Name}'",
+                Content = $"Error: tool '{tc.Name}' is not allowed in workflow phase '{_phase}'. " +
+                          "Use grep/glob/read first and submit a plan via submit_plan (or todo) before write-like tools.",
                 IsError = true
             };
+        }
+
+        var tool = _toolsBase.Get(tc.Name);
+        if (tool is null)
+        {
+            return new ToolResult { ToolCallId = tc.Id, Content = $"Error: unknown tool '{tc.Name}'", IsError = true };
         }
 
         // DeepSeek (and some providers) may return empty string for tool args; normalize to "{}"
@@ -334,6 +404,97 @@ public sealed class AgentLoop : IAgent
                 Content = $"Error: {ex.Message}",
                 IsError = true
             };
+        }
+        finally
+        {
+            if (_workflow.Enabled && _workflow.AutoVerifyAfterFirstWrite && _phase == WorkflowPhase.Act)
+            {
+                if (string.Equals(tc.Name, "write", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(tc.Name, "str_replace", StringComparison.OrdinalIgnoreCase))
+                {
+                    _phase = WorkflowPhase.Verify;
+                }
+            }
+        }
+    }
+
+    private void ResetWorkflowForNewUserMessage()
+    {
+        if (!_workflow.Enabled)
+        {
+            _phase = WorkflowPhase.Act;
+            return;
+        }
+
+        // If gating is off, start directly in Act.
+        _phase = _workflow.RequirePlanForWrite ? WorkflowPhase.Observe : WorkflowPhase.Act;
+        _planStore?.Clear();
+    }
+
+    private void MaybePromoteObserveToAct()
+    {
+        if (!_workflow.Enabled) return;
+        if (_phase != WorkflowPhase.Observe) return;
+        if (!_workflow.RequirePlanForWrite)
+        {
+            _phase = WorkflowPhase.Act;
+            return;
+        }
+
+        var hasPlan = _planStore is { HasPlan: true };
+        var hasTodos = _todoStore is { HasItems: true };
+        if (hasPlan || hasTodos)
+            _phase = WorkflowPhase.Act;
+    }
+
+    private IToolRegistry GetToolsForCurrentPhase()
+    {
+        if (!_workflow.Enabled) return _toolsBase;
+
+        // Minimal per-phase allowlist, intersected with base tool policy.
+        var allow = _phase switch
+        {
+            WorkflowPhase.Observe => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "grep", "glob", "read", "read_many", "list_dir", "memory_get", "memory_search", "todo", "submit_plan"
+            },
+            WorkflowPhase.Verify => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "grep", "glob", "read", "read_many", "list_dir", "memory_get", "memory_search", "todo", "exec"
+            },
+            _ => null
+        };
+
+        if (allow is null) return _toolsBase;
+        return new PhaseToolFilter(_toolsBase, allow);
+    }
+
+    private bool IsToolAllowedInCurrentPhase(string toolName)
+    {
+        if (!_workflow.Enabled) return true;
+
+        // Always honor per-phase filter.
+        var toolsForTurn = GetToolsForCurrentPhase();
+        return toolsForTurn.Get(toolName) is not null;
+    }
+
+    private sealed class PhaseToolFilter : IToolRegistry
+    {
+        private readonly IToolRegistry _inner;
+        private readonly HashSet<string> _allowed;
+
+        public PhaseToolFilter(IToolRegistry inner, HashSet<string> allowed)
+        {
+            _inner = inner;
+            _allowed = allowed;
+        }
+
+        public IReadOnlyList<ITool> All => _inner.All.Where(t => _allowed.Contains(t.Name)).ToList();
+
+        public ITool? Get(string name)
+        {
+            if (!_allowed.Contains(name)) return null;
+            return _inner.Get(name);
         }
     }
 }

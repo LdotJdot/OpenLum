@@ -11,8 +11,8 @@ public static class SystemPromptBuilder
     /// <summary>Tool order for prompt. Search/read/edit tools first, then runtime/memory/sessions.</summary>
     private static readonly string[] ToolOrder =
     [
-        "grep", "glob", "read", "write", "str_replace", "list_dir",
-        "exec",
+        "semantic_search", "grep", "glob", "read", "read_many", "write", "str_replace", "list_dir",
+        "todo", "submit_plan", "exec",
         "memory_search", "memory_get",
         "sessions_spawn"
     ];
@@ -51,11 +51,19 @@ public static class SystemPromptBuilder
             "",
             "## Search → Read → Edit workflow",
             "For code/text tasks, prefer this sequence:",
-            "1. **glob** to find files by name pattern; **grep** to find content by regex. Use grep output_mode=\"files_with_matches\" for fast file discovery.",
+            "1. **semantic_search** when you don't know exact symbols; otherwise use **glob** (file discovery) and **grep** (content regex). Use grep output_mode=\"files_with_matches\" for fast file discovery.",
             "2. **read** with offset/limit to inspect relevant sections (avoid reading entire large files).",
             "3. **str_replace** for small, precise edits (old_string must be unique); **write** only for new files or full rewrites.",
             "You can call multiple read-only tools (grep, glob, read, list_dir) in a single turn — they run in parallel for speed.",
             "For PDF/Word/Excel and other binary formats, use the corresponding skill via exec (see <available_skills>).",
+            "Tip: grep's glob filter is for file extensions; prefer \"*.md\" or \"**/*.md\" (both supported) rather than complex path globs.",
+            "",
+            "## Task Management",
+            "For multi-step tasks (3+ steps), use the todo tool to track progress. " +
+            "Use merge=false to create/replace the list, merge=true to update items by id. " +
+            "Keep only one item in_progress at a time. Update status as you complete steps. " +
+            "Skip todo for simple or single-step tasks.",
+            "For complex tasks, you can also submit a short plan via submit_plan to keep a stable plan artifact in context.",
             "",
             "## Safety",
             "Prioritize safety and human oversight. If instructions conflict, pause and ask.",

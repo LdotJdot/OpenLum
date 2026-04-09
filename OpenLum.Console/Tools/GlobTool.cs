@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using OpenLum.Console.Config;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.IO;
 using static OpenLum.Console.Tools.ToolArgHelpers;
@@ -13,11 +14,15 @@ public sealed class GlobTool : ITool
 {
     private readonly WorkspacePathResolver _resolver;
     private readonly string _workspaceRoot;
+    private readonly HashSet<string> _skipDirNames;
+    private readonly List<Regex> _skipGlobs;
 
-    public GlobTool(WorkspacePathResolver resolver)
+    public GlobTool(WorkspacePathResolver resolver, SearchConfig? searchConfig = null)
     {
         _resolver = resolver;
         _workspaceRoot = resolver.WorkspaceRoot;
+        _skipDirNames = BuildSkipDirs(searchConfig);
+        _skipGlobs = BuildSkipGlobs(searchConfig);
     }
 
     public GlobTool(string workspaceDir) : this(new WorkspacePathResolver(workspaceDir)) { }
@@ -52,7 +57,7 @@ public sealed class GlobTool : ITool
             return Task.FromResult(res.Error!);
         var searchDir = res.FullPath!;
 
-        var regex = GlobToRegex(pattern);
+        var regex = GlobRegex.ToRegex(pattern);
 
         List<(string RelPath, DateTime ModTime)> matches = [];
 
@@ -66,7 +71,7 @@ public sealed class GlobTool : ITool
                      }))
             {
                 if (ct.IsCancellationRequested) break;
-                if (ShouldSkipPath(file)) continue;
+                if (ShouldSkipPath(searchDir, file)) continue;
 
                 var rel = Path.GetRelativePath(searchDir, file).Replace('\\', '/');
 
@@ -98,93 +103,57 @@ public sealed class GlobTool : ITool
         return Task.FromResult(sb.ToString());
     }
 
-    /// <summary>Skip directories by path segment, not substring contains.</summary>
-    private static readonly HashSet<string> SkipDirNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "node_modules", ".git", "bin", "obj", "__pycache__", ".vs", ".idea"
-    };
-
-    private static bool ShouldSkipPath(string fullPath)
+    private bool ShouldSkipPath(string searchDir, string fullPath)
     {
         var dir = Path.GetDirectoryName(fullPath);
         while (!string.IsNullOrEmpty(dir))
         {
             var name = Path.GetFileName(dir);
-            if (SkipDirNames.Contains(name))
+            if (_skipDirNames.Contains(name))
                 return true;
             dir = Path.GetDirectoryName(dir);
         }
+
+        if (_skipGlobs.Count > 0)
+        {
+            var rel = Path.GetRelativePath(searchDir, fullPath).Replace('\\', '/');
+            foreach (var rx in _skipGlobs)
+            {
+                if (rx.IsMatch(rel))
+                    return true;
+            }
+        }
+
         return false;
     }
 
-    /// <summary>
-    /// Convert a glob pattern to a regex. Supports *, **, ?, {a,b}.
-    /// Patterns without path separators get auto-prepended with **/ for recursive matching.
-    /// </summary>
-    private static Regex GlobToRegex(string glob)
+    private static HashSet<string> BuildSkipDirs(SearchConfig? cfg)
     {
-        if (!glob.Contains('/') && !glob.Contains('\\') && !glob.StartsWith("**/"))
-            glob = "**/" + glob;
-
-        var sb = new StringBuilder("^");
-        var i = 0;
-        while (i < glob.Length)
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            var c = glob[i];
-            switch (c)
+            "node_modules", ".git", "bin", "obj", "__pycache__", ".vs", ".idea"
+        };
+        if (cfg?.SkipDirs is { Count: > 0 })
+        {
+            foreach (var d in cfg.SkipDirs)
             {
-                case '*':
-                    if (i + 1 < glob.Length && glob[i + 1] == '*')
-                    {
-                        if (i + 2 < glob.Length && (glob[i + 2] == '/' || glob[i + 2] == '\\'))
-                        {
-                            sb.Append("(.+/)?");
-                            i += 3;
-                        }
-                        else
-                        {
-                            sb.Append(".*");
-                            i += 2;
-                        }
-                    }
-                    else
-                    {
-                        sb.Append("[^/]*");
-                        i++;
-                    }
-                    break;
-                case '?':
-                    sb.Append("[^/]");
-                    i++;
-                    break;
-                case '{':
-                    var end = glob.IndexOf('}', i);
-                    if (end > i)
-                    {
-                        var alts = glob[(i + 1)..end].Split(',');
-                        sb.Append('(');
-                        sb.Append(string.Join('|', alts.Select(Regex.Escape)));
-                        sb.Append(')');
-                        i = end + 1;
-                    }
-                    else
-                    {
-                        sb.Append(Regex.Escape(c.ToString()));
-                        i++;
-                    }
-                    break;
-                case '\\':
-                case '/':
-                    sb.Append("[/\\\\]");
-                    i++;
-                    break;
-                default:
-                    sb.Append(Regex.Escape(c.ToString()));
-                    i++;
-                    break;
+                if (!string.IsNullOrWhiteSpace(d))
+                    set.Add(d.Trim());
             }
         }
-        sb.Append('$');
-        return new Regex(sb.ToString(), RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        return set;
+    }
+
+    private static List<Regex> BuildSkipGlobs(SearchConfig? cfg)
+    {
+        var list = new List<Regex>();
+        if (cfg?.SkipGlobs is not { Count: > 0 }) return list;
+        foreach (var g in cfg.SkipGlobs)
+        {
+            if (string.IsNullOrWhiteSpace(g)) continue;
+            try { list.Add(GlobRegex.ToRegex(g.Trim())); }
+            catch { /* ignore invalid patterns */ }
+        }
+        return list;
     }
 }

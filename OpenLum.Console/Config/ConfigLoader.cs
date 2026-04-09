@@ -35,6 +35,8 @@ public static class ConfigLoader
                     Compaction = ParseCompaction(root.TryGetProperty("compaction", out var c) ? c : default),
                     Agent = ParseAgent(root.TryGetProperty("agent", out var ag) ? ag : default),
                     Browser = ParseBrowser(root.TryGetProperty("browser", out var b) ? b : default),
+                    Workflow = ParseWorkflow(root.TryGetProperty("workflow", out var wf) ? wf : default),
+                    Search = ParseSearch(root.TryGetProperty("search", out var se) ? se : default),
                     Workspace = root.TryGetProperty("workspace", out var w) ? w.GetString()?.Trim() : null,
                     UserTimezone = root.TryGetProperty("userTimezone", out var tz) ? tz.GetString()?.Trim() : null
                 };
@@ -160,6 +162,31 @@ public static class ConfigLoader
         };
     }
 
+    private static WorkflowConfig ParseWorkflow(JsonElement el)
+    {
+        if (el.ValueKind != JsonValueKind.Object)
+            return new WorkflowConfig();
+
+        return new WorkflowConfig
+        {
+            Enabled = el.TryGetProperty("enabled", out var e) && e.GetBoolean(),
+            RequirePlanForWrite = el.TryGetProperty("requirePlanForWrite", out var rp) ? rp.GetBoolean() : true,
+            AutoVerifyAfterFirstWrite = el.TryGetProperty("autoVerifyAfterFirstWrite", out var av) && av.GetBoolean()
+        };
+    }
+
+    private static SearchConfig ParseSearch(JsonElement el)
+    {
+        if (el.ValueKind != JsonValueKind.Object)
+            return new SearchConfig();
+
+        return new SearchConfig
+        {
+            SkipDirs = el.TryGetProperty("skipDirs", out var sd) ? ParseStringArray(sd) : [],
+            SkipGlobs = el.TryGetProperty("skipGlobs", out var sg) ? ParseStringArray(sg) : []
+        };
+    }
+
     private static List<string> ParseStringArray(JsonElement el)
     {
         if (el.ValueKind != JsonValueKind.Array)
@@ -183,6 +210,8 @@ public sealed class AppConfig
     public CompactionConfig Compaction { get; init; } = new();
     public AgentConfig Agent { get; init; } = new();
     public BrowserConfig Browser { get; init; } = new();
+    public WorkflowConfig Workflow { get; init; } = new();
+    public SearchConfig Search { get; init; } = new();
     /// <summary>Workspace root path. Default: AppContext.BaseDirectory/workspace.</summary>
     public string? Workspace { get; init; }
     /// <summary>IANA timezone for timestamp injection (e.g. Asia/Shanghai). Default: local.</summary>
@@ -231,4 +260,28 @@ public sealed class BrowserConfig
     public bool Headless { get; init; } = false;
     /// <summary>Browser channel (e.g. "msedge" for Edge). Default: msedge on Windows.</summary>
     public string? Channel { get; init; }
+}
+
+/// <summary>
+/// Optional workflow gating (phases) to improve safety and reduce premature writes.
+/// </summary>
+public sealed class WorkflowConfig
+{
+    /// <summary>When true, tools are exposed in phases (Observe -> Act -> Verify).</summary>
+    public bool Enabled { get; init; } = false;
+    /// <summary>When true, write-like tools are gated behind submit_plan/todo planning in Observe phase.</summary>
+    public bool RequirePlanForWrite { get; init; } = true;
+    /// <summary>If true, auto-switch to Verify after first write-like tool executes.</summary>
+    public bool AutoVerifyAfterFirstWrite { get; init; } = false;
+}
+
+/// <summary>
+/// Search/scan configuration for grep/glob tools.
+/// </summary>
+public sealed class SearchConfig
+{
+    /// <summary>Directory names to skip when scanning (path segments).</summary>
+    public IReadOnlyList<string> SkipDirs { get; init; } = [];
+    /// <summary>Path/file globs to skip when scanning (matched against relative path).</summary>
+    public IReadOnlyList<string> SkipGlobs { get; init; } = [];
 }

@@ -37,13 +37,20 @@ public sealed class Application
 
         var resolver = new WorkspacePathResolver(workspaceDir, SkillLoader.GetSkillRoots(workspaceDir));
 
+        var todoStore = new TodoStore();
+        var planStore = new PlanStore();
+
         var baseTools = new ToolRegistry();
         baseTools.Register(new ReadTool(resolver));
+        baseTools.Register(new ReadManyTool(resolver));
         baseTools.Register(new WriteTool(resolver));
         baseTools.Register(new StrReplaceTool(resolver));
         baseTools.Register(new ListDirTool(resolver));
-        baseTools.Register(new GrepTool(resolver));
-        baseTools.Register(new GlobTool(resolver));
+        baseTools.Register(new GrepTool(resolver, config.Search));
+        baseTools.Register(new GlobTool(resolver, config.Search));
+        baseTools.Register(new SemanticSearchTool(resolver, config.Search));
+        baseTools.Register(new TodoTool(todoStore));
+        baseTools.Register(new SubmitPlanTool(planStore));
         baseTools.Register(new ExecTool(workspaceDir));
         baseTools.Register(new MemoryGetTool(workspaceDir));
         baseTools.Register(new MemorySearchTool(workspaceDir));
@@ -92,6 +99,9 @@ public sealed class Application
             session,
             systemPrompt,
             compactor: compactor,
+            todoStore: todoStore,
+            planStore: planStore,
+            workflow: config.Workflow,
             onToolExecuting: (name, args) =>
             {
                 lock (ConsoleLock)
@@ -113,7 +123,7 @@ public sealed class Application
         System.Console.WriteLine("OpenLum Console — generic agent shell. Use /help for commands.");
         System.Console.WriteLine();
 
-        return RunRepl(agent, session, workspaceDir, config.UserTimezone);
+        return RunRepl(agent, session, workspaceDir, config.UserTimezone, todoStore, planStore);
     }
 
     private static int RunConfigDoctor()
@@ -139,7 +149,9 @@ public sealed class Application
         AgentLoop agent,
         ConsoleSession session,
         string workspaceDir,
-        string? userTimezone = null)
+        string? userTimezone = null,
+        TodoStore? todoStore = null,
+        PlanStore? planStore = null)
     {
         while (true)
         {
@@ -165,6 +177,8 @@ public sealed class Application
                         return 0;
                     case "clear":
                         session.Clear();
+                        todoStore?.Clear();
+                        planStore?.Clear();
                         System.Console.WriteLine("Session cleared.");
                         continue;
                     case "help":

@@ -12,6 +12,7 @@ namespace OpenLum.Console.Tools;
 public sealed class ReadTool : ITool
 {
     private readonly WorkspacePathResolver _resolver;
+    private const long DefaultMaxBytes = 5 * 1024 * 1024; // 5MB safety cap for plain-text reads
 
     public ReadTool(WorkspacePathResolver resolver) => _resolver = resolver;
 
@@ -29,7 +30,8 @@ public sealed class ReadTool : ITool
     [
         new ToolParameter("path", "string", "File path (workspace-relative or absolute; supports ~).", true),
         new ToolParameter("offset", "number", "1-based start line (default 1). Negative values count from end.", false),
-        new ToolParameter("limit", "number", "Max lines to return (default 200, max 2000).", false)
+        new ToolParameter("limit", "number", "Max lines to return (default 200, max 2000).", false),
+        new ToolParameter("max_bytes", "number", "Max file size in bytes to read (default 5242880 = 5MB).", false)
     ];
 
     public Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
@@ -43,17 +45,7 @@ public sealed class ReadTool : ITool
 
         var limit = ParseInt(args, "limit", 200, 1, 2000, zeroMeansDefault: true);
         var offset = ParseInt(args, "offset", 1);
-
-        string[] lines;
-        try
-        {
-            lines = File.ReadAllLines(fullPath);
-        }
-        catch (Exception ex)
-        {
-            return Task.FromResult(
-                $"Error reading file: {ex.Message}. For Office/PDF/CAD, use exec with the corresponding skill exe.");
-        }
+        var maxBytes = (long)ParseInt(args, "max_bytes", (int)DefaultMaxBytes, 1, int.MaxValue, zeroMeansDefault: true);
 
         if (IsSkillFile(fullPath))
         {
@@ -61,24 +53,30 @@ public sealed class ReadTool : ITool
             LogSkillLoaded(skillName, fullPath);
         }
 
-        int startIdx;
-        if (offset < 0)
-            startIdx = Math.Max(0, lines.Length + offset);
-        else
-            startIdx = Math.Max(0, offset - 1);
+        try
+        {
+            var fi = new FileInfo(fullPath);
+            if (fi.Exists && fi.Length > maxBytes)
+            {
+                return Task.FromResult(
+                    $"Error reading file: file is too large ({fi.Length} bytes > max_bytes={maxBytes}). " +
+                    "Use grep to locate the relevant section, then read with a smaller range via offset/limit.");
+            }
+        }
+        catch
+        {
+            // ignore size probing failures; attempt read below
+        }
 
-        var take = Math.Min(lines.Length - startIdx, limit);
-        if (take <= 0)
-            return Task.FromResult($"(file has {lines.Length} lines; requested range is empty)");
-
-        var sb = new StringBuilder();
-        for (var i = startIdx; i < startIdx + take; i++)
-            sb.AppendLine($"{i + 1,6}|{lines[i]}");
-
-        if (startIdx + take < lines.Length)
-            sb.AppendLine($"... [{lines.Length - startIdx - take} more lines, {lines.Length} total]");
-
-        return Task.FromResult(sb.ToString());
+        try
+        {
+            return Task.FromResult(ReadRangeStreaming(fullPath, offset, limit));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult(
+                $"Error reading file: {ex.Message}. For Office/PDF/CAD, use exec with the corresponding skill exe.");
+        }
     }
 
     private static bool IsSkillFile(string fullPath)
@@ -104,5 +102,51 @@ public sealed class ReadTool : ITool
                 System.Console.ForegroundColor = prev;
             }
         }
+    }
+
+    private static string ReadRangeStreaming(string fullPath, int offset, int limit)
+    {
+        // Two-pass for negative offsets: count lines first, then stream the requested range.
+        var startLine = offset;
+        int totalLines = 0;
+        if (offset < 0)
+        {
+            foreach (var _ in File.ReadLines(fullPath))
+                totalLines++;
+            startLine = Math.Max(1, totalLines + offset + 1); // offset=-1 => last line
+        }
+
+        var sb = new StringBuilder();
+        var lineNo = 0;
+        var startIdx = Math.Max(1, startLine);
+        var endIdx = startIdx + Math.Max(1, limit) - 1;
+
+        foreach (var line in File.ReadLines(fullPath))
+        {
+            lineNo++;
+            if (lineNo < startIdx) continue;
+            if (lineNo > endIdx) break;
+            sb.AppendLine($"{lineNo,6}|{line}");
+        }
+
+        // If start beyond EOF, lineNo will be total lines (or less if file empty).
+        if (sb.Length == 0)
+        {
+            if (offset < 0)
+                return $"(file has {totalLines} lines; requested range is empty)";
+            // For positive offset, we need a count for the message; do a cheap count only on empty result.
+            foreach (var _ in File.ReadLines(fullPath))
+                totalLines++;
+            return $"(file has {totalLines} lines; requested range is empty)";
+        }
+
+        // Add trailing hint only when we know total lines cheaply.
+        if (offset < 0)
+        {
+            if (endIdx < totalLines)
+                sb.AppendLine($"... [{totalLines - endIdx} more lines, {totalLines} total]");
+        }
+
+        return sb.ToString();
     }
 }

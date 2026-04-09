@@ -9,8 +9,8 @@ public static class ToolProfiles
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> Groups { get; } =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["group:fs"] = ["read", "write", "str_replace", "list_dir"],
-            ["group:search"] = ["grep", "glob"],
+            ["group:fs"] = ["read", "read_many", "write", "str_replace", "list_dir", "todo", "submit_plan"],
+            ["group:search"] = ["grep", "glob", "semantic_search"],
             ["group:web"] = ["browser_navigate", "browser_snapshot", "browser_tabs", "browser_click", "browser_type", "browser_page_text", "browser_screenshot", "browser_upload"],
             ["group:runtime"] = ["exec"],
             ["group:memory"] = ["memory_get", "memory_search"],
