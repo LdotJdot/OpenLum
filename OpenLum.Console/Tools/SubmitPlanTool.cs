@@ -16,7 +16,7 @@ public sealed class SubmitPlanTool : ITool
 
     public string Description =>
         "Submit or update a lightweight plan artifact for multi-step tasks. " +
-        "Use this before making write-like changes when the workflow requires a plan.";
+        "When the workflow gates writes, call this (or create TODOs) in Observe so the runtime can move to Act; then write/str_replace/exec become available as allowed by policy.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

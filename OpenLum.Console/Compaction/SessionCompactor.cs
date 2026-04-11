@@ -13,17 +13,20 @@ public sealed class SessionCompactor
     private readonly int _maxMessagesBeforeCompact;
     private readonly int _reserveRecent;
     private readonly bool _collapseFailedAttempts;
+    private readonly Action<string>? _onCompactionSummary;
 
     public SessionCompactor(
         IModelProvider model,
         int maxMessagesBeforeCompact = 30,
         int reserveRecent = 10,
-        bool collapseFailedAttempts = true)
+        bool collapseFailedAttempts = true,
+        Action<string>? onCompactionSummary = null)
     {
         _model = model;
         _maxMessagesBeforeCompact = maxMessagesBeforeCompact;
         _reserveRecent = reserveRecent;
         _collapseFailedAttempts = collapseFailedAttempts;
+        _onCompactionSummary = onCompactionSummary;
     }
 
     /// <summary>
@@ -47,6 +50,7 @@ public sealed class SessionCompactor
 
         var summary = await SummarizeAsync(toSummarize, ct);
         session.CompactWithSummary(_reserveRecent, summary);
+        _onCompactionSummary?.Invoke(summary);
         return true;
     }
 

@@ -21,6 +21,7 @@ public sealed class ReadManyTool : ITool
     public string Description =>
         "Read multiple plain-text files in one call. " +
         "Provide items=[{path, offset?, limit?}] or paths=[...]. " +
+        "If the call errors, fix paths/JSON and retry once—do not fall back to reading every file in a tree unless the user asked for that. " +
         "For PDF/Office/CAD, use the corresponding skill via exec. " +
         "Each file returns numbered lines like read.";
 

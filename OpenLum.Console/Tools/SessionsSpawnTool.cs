@@ -1,7 +1,9 @@
 using OpenLum.Console.Agent;
 using OpenLum.Console.Compaction;
+using OpenLum.Console.Config;
 using OpenLum.Console.Console;
 using OpenLum.Console.Interfaces;
+using OpenLum.Console.Observability;
 using OpenLum.Console.Session;
 
 namespace OpenLum.Console.Tools;
@@ -11,7 +13,8 @@ namespace OpenLum.Console.Tools;
 /// Sub-agent shares the same environment as the parent: same workspace, same tool instances
 /// (read/write/list_dir/exec/memory_*), same model, same Skills section in prompt. Only differences:
 /// (1) Fresh session (no prior chat); (2) No sessions_spawn tool and prompt lists one fewer tool;
-/// (3) Extra "[Sub-agent: ...]" reminder in system prompt; (4) Optional compactor/limits aligned with config.
+/// (3) Extra "[Sub-agent: ...]" reminder in system prompt; (4) Optional compactor/limits aligned with config;
+/// (5) Own TodoStore/PlanStore so workflow Observe→Act promotion matches todo/submit_plan calls (fixes exec gated behind Act).
 /// </summary>
 public sealed class SessionsSpawnTool : ITool
 {
@@ -27,6 +30,8 @@ public sealed class SessionsSpawnTool : ITool
     private readonly int? _maxToolResultChars;
     private readonly int? _maxFailedToolResultChars;
     private readonly bool _useModelDecideAtLimit;
+    private readonly SessionRunLogger? _sessionRunLogger;
+    private readonly WorkflowConfig _workflow;
 
     public SessionsSpawnTool(
         IModelProvider model,
@@ -38,7 +43,9 @@ public sealed class SessionsSpawnTool : ITool
         int maxToolTurns = 100,
         int? maxToolResultChars = null,
         int? maxFailedToolResultChars = null,
-        bool useModelDecideAtLimit = true)
+        bool useModelDecideAtLimit = true,
+        SessionRunLogger? sessionRunLogger = null,
+        WorkflowConfig? workflow = null)
     {
         _model = model;
         _parentTools = parentTools;
@@ -52,10 +59,14 @@ public sealed class SessionsSpawnTool : ITool
         _maxToolResultChars = maxToolResultChars;
         _maxFailedToolResultChars = maxFailedToolResultChars;
         _useModelDecideAtLimit = useModelDecideAtLimit;
+        _sessionRunLogger = sessionRunLogger;
+        _workflow = workflow ?? new WorkflowConfig();
     }
 
     public string Name => "sessions_spawn";
-    public string Description => "Spawn a sub-agent to complete a task in an isolated session. Returns the sub-agent's final reply.";
+    public string Description =>
+        "Spawn a sub-agent to complete a task in an isolated session. Returns the sub-agent's final reply. " +
+        "Once you receive the result, treat it as the answer for that delegated task—do not spawn again for the same work.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("task", "string", "The task for the sub-agent to complete", true),
@@ -71,23 +82,40 @@ public sealed class SessionsSpawnTool : ITool
         var label = args.GetValueOrDefault("label")?.ToString();
         var subagentLabel = string.IsNullOrWhiteSpace(label) ? "sub-agent" : $"sub-agent:{label}";
 
-        var subTools = CreateSubagentToolRegistry();
+        // Isolated plan/todo stores + same workflow as parent so Observe→Act promotion matches submit_plan/todo tool effects.
+        var subTodoStore = new TodoStore();
+        var subPlanStore = new PlanStore();
+        var subTools = CreateSubagentToolRegistry(subTodoStore, subPlanStore);
         var subSession = new ConsoleSession();
+        var subLog = _sessionRunLogger?.CreateScoped(subagentLabel);
         var subAgent = new AgentLoop(
             _model,
             subTools,
             subSession,
             _systemPrompt,
             compactor: _compactor,
-            onToolExecuting: (name, arguments) =>
+            todoStore: subTodoStore,
+            planStore: subPlanStore,
+            workflow: _workflow,
+            runLogger: subLog,
+            onToolStarting: (name, arguments) =>
             {
                 lock (ConsoleLock)
                 {
                     var prev = System.Console.ForegroundColor;
                     System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
-                    // Always start sub-agent tool logs on a fresh line to avoid interleaving mid-sentence
                     System.Console.WriteLine();
-                    System.Console.WriteLine($"    [{subagentLabel}] → {name}({arguments})");
+                    System.Console.WriteLine($"    [{subagentLabel}] {ToolActivityFormatter.FormatStarting(name, arguments)}");
+                    System.Console.ForegroundColor = prev;
+                }
+            },
+            onToolCompleted: (name, arguments, success) =>
+            {
+                lock (ConsoleLock)
+                {
+                    var prev = System.Console.ForegroundColor;
+                    System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+                    System.Console.WriteLine($"    [{subagentLabel}] {ToolActivityFormatter.FormatCompleted(name, arguments, success)}");
                     System.Console.ForegroundColor = prev;
                 }
             },
@@ -95,6 +123,8 @@ public sealed class SessionsSpawnTool : ITool
             maxFailedToolResultChars: _maxFailedToolResultChars,
             maxToolTurns: _maxToolTurns,
             useModelDecideAtLimit: _useModelDecideAtLimit);
+
+        subLog?.WriteLine($"sessions_spawn task: {task}");
 
         var startedStreaming = false;
         var thinkProgress = new ThinkAwareConsoleProgress(ConsoleLock);
@@ -156,15 +186,28 @@ public sealed class SessionsSpawnTool : ITool
         return $"[子agent已结束，以下为子agent的最终回复]\n\n{reply}";
     }
 
-    private IToolRegistry CreateSubagentToolRegistry()
+    private IToolRegistry CreateSubagentToolRegistry(TodoStore todoStore, PlanStore planStore)
     {
         var filtered = new ToolRegistry();
         foreach (var t in _parentTools.All)
         {
             if (t.Name == "sessions_spawn")
                 continue;
+            if (string.Equals(t.Name, "todo", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered.Register(new TodoTool(todoStore));
+                continue;
+            }
+
+            if (string.Equals(t.Name, "submit_plan", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered.Register(new SubmitPlanTool(planStore));
+                continue;
+            }
+
             filtered.Register(t);
         }
+
         return filtered;
     }
 }

@@ -81,7 +81,14 @@ public sealed class OpenAIModelProvider : IModelProvider
                 Id = t.Id ?? "",
                 Name = t.Function?.Name ?? "",
                 Arguments = t.Function?.Arguments ?? "{}"
-            }).ToList() ?? []);
+            }).ToList() ?? [],
+            MapUsage(body.Usage));
+    }
+
+    private static ModelTokenUsage? MapUsage(OpenAIUsageDto? u)
+    {
+        if (u is null) return null;
+        return new ModelTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
     }
 
     private async Task<ModelResponse> StreamChatAsync(
@@ -113,6 +120,7 @@ public sealed class OpenAIModelProvider : IModelProvider
 
         var content = new StringBuilder();
         var toolCallsByIndex = new List<(string Id, string Name, StringBuilder Args)>();
+        OpenAIUsageDto? streamUsage = null;
 
         await foreach (var line in ReadLinesAsync(resp.Content.ReadAsStreamAsync(ct), ct))
         {
@@ -131,6 +139,9 @@ public sealed class OpenAIModelProvider : IModelProvider
                 {
                     continue;
                 }
+
+                if (chunk?.Usage is { } usageChunk)
+                    streamUsage = usageChunk;
 
                 var choice = chunk?.Choices?.FirstOrDefault(c => c.Index == 0) ?? chunk?.Choices?.FirstOrDefault();
                 var delta = choice?.Delta;
@@ -171,7 +182,7 @@ public sealed class OpenAIModelProvider : IModelProvider
             .ToList();
 
         var fullContent = content.ToString();
-        return new ModelResponse(fullContent, toolCallList);
+        return new ModelResponse(fullContent, toolCallList, MapUsage(streamUsage));
     }
 
     private static async IAsyncEnumerable<string> ReadLinesAsync(

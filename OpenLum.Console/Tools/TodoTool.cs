@@ -18,7 +18,8 @@ public sealed class TodoTool : ITool
     public string Description =>
         "Create or update a structured TODO list for tracking multi-step tasks. " +
         "Each item has id, content, status (pending/in_progress/completed/cancelled). " +
-        "Set merge=true to update specific items by id; merge=false to replace the entire list.";
+        "Set merge=true to update specific items by id; merge=false to replace the entire list. " +
+        "When the workflow gates writes, adding TODOs in Observe can unlock Act (same role as submit_plan).";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [
@@ -70,9 +71,9 @@ public sealed class TodoTool : ITool
     {
         if (elem.ValueKind != JsonValueKind.Object) return null;
 
-        var id = elem.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-        var content = elem.TryGetProperty("content", out var contentProp) ? contentProp.GetString() : null;
-        var status = elem.TryGetProperty("status", out var statusProp) ? statusProp.GetString() : null;
+        var id = elem.TryGetProperty("id", out var idProp) ? ToolArgHelpers.JsonElementAsString(idProp) : null;
+        var content = elem.TryGetProperty("content", out var contentProp) ? ToolArgHelpers.JsonElementAsString(contentProp) : null;
+        var status = elem.TryGetProperty("status", out var statusProp) ? ToolArgHelpers.JsonElementAsString(statusProp) : null;
 
         if (string.IsNullOrWhiteSpace(id)) return null;
 

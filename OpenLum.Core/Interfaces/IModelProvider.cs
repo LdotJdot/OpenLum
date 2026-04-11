@@ -7,7 +7,8 @@ namespace OpenLum.Console.Interfaces;
 /// </summary>
 public sealed record ModelResponse(
     string Content,
-    IReadOnlyList<ToolCall> ToolCalls);
+    IReadOnlyList<ToolCall> ToolCalls,
+    ModelTokenUsage? Usage = null);
 
 /// <summary>
 /// Contract for LLM inference.

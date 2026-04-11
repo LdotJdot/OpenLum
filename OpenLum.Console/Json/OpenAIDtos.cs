@@ -11,6 +11,21 @@ internal sealed class OpenAICompletionResponse
 {
     [JsonPropertyName("choices")]
     public List<OpenAIChoice>? Choices { get; set; }
+
+    [JsonPropertyName("usage")]
+    public OpenAIUsageDto? Usage { get; set; }
+}
+
+internal sealed class OpenAIUsageDto
+{
+    [JsonPropertyName("prompt_tokens")]
+    public int? PromptTokens { get; set; }
+
+    [JsonPropertyName("completion_tokens")]
+    public int? CompletionTokens { get; set; }
+
+    [JsonPropertyName("total_tokens")]
+    public int? TotalTokens { get; set; }
 }
 
 internal sealed class OpenAIChoice
@@ -59,6 +74,10 @@ internal sealed class OpenAIStreamChunk
 {
     [JsonPropertyName("choices")]
     public List<OpenAIChoice>? Choices { get; set; }
+
+    /// <summary>Some providers send usage on the final SSE chunk when stream_options includes usage.</summary>
+    [JsonPropertyName("usage")]
+    public OpenAIUsageDto? Usage { get; set; }
 }
 
 internal sealed class OpenAIStreamDelta

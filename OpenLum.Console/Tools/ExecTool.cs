@@ -12,18 +12,25 @@ public sealed class ExecTool : ITool
     private readonly string _workspaceDir;
     private readonly int _defaultTimeoutSeconds;
 
-    public ExecTool(string workspaceDir, int defaultTimeoutSeconds = 60)
+    /// <summary>Default 120s — browser skills (openlum-browser) cold-start + navigate often exceed 60s.</summary>
+    public ExecTool(string workspaceDir, int defaultTimeoutSeconds = 120)
     {
         _workspaceDir = Path.GetFullPath(workspaceDir);
         _defaultTimeoutSeconds = defaultTimeoutSeconds;
     }
 
     public string Name => "exec";
-    public string Description => "Run a PowerShell command. Working directory is workspace. Prefer absolute paths for any exec path or working directory; workspace-relative paths are also accepted. Use PowerShell syntax only: chain with ; (not &&), use & \"path\" for paths with spaces. Do NOT use cmd /c or bash-style.";
+    public string Description =>
+        "Run a PowerShell command. Default working directory is the workspace. " +
+        "Prefer absolute paths; workspace-relative paths are accepted. " +
+        "PowerShell only: chain with ; (not &&); use & \"path\" when paths contain spaces. Do not use cmd /c or bash-style. " +
+        "Do not use exec to redo what grep, glob, list_dir, read, or semantic_search already solve (recursive listing or text search). " +
+        "Typical uses: builds/tests (dotnet, npm), or running a skill exe after reading that skill's SKILL.md. " +
+        "After native search tools report no matches on the user's scope, stop and answer—do not spawn long shell search loops.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("command", "string", "PowerShell command. Use ; to chain (never &&). Example: cd \"path\"; dotnet build", true),
-        new ToolParameter("timeoutSeconds", "number", "Timeout in seconds (default 60)", false),
+        new ToolParameter("timeoutSeconds", "number", "Timeout in seconds (default 120; openlum-browser commands use at least 180)", false),
         new ToolParameter("stdin", "string", "Input to send to process stdin (for Console.ReadLine/ReadKey). Each line for ReadLine; single chars for ReadKey. Example: \"hello\\n\" or \"y\\n\" for prompts.", false)
     ];
 
@@ -45,6 +52,10 @@ public sealed class ExecTool : ITool
             };
             if (n > 0) timeoutSec = Math.Min(n, 600);
         }
+
+        // openlum-browser: first run may start --master, wait for socket, navigate (Playwright). 60s is often too short.
+        if (command.IndexOf("openlum-browser", StringComparison.OrdinalIgnoreCase) >= 0)
+            timeoutSec = Math.Max(timeoutSec, 180);
 
         var stdinContent = args.GetValueOrDefault("stdin")?.ToString();
 
@@ -125,6 +136,14 @@ public sealed class ExecTool : ITool
             var result = sb.ToString();
             if (result.Length > 50_000)
                 result = result[..50_000] + $"\n... [truncated, {result.Length - 50_000} more chars]";
+
+            if (process.ExitCode != 0)
+            {
+                if (string.IsNullOrWhiteSpace(result))
+                    return $"Error: exit code {process.ExitCode} (no output captured).";
+                if (!result.TrimStart().StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
+                    return $"Error: exit code {process.ExitCode}. {result}";
+            }
 
             return string.IsNullOrEmpty(result) ? $"(exit code {process.ExitCode})" : result;
         }

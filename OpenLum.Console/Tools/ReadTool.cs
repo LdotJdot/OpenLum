@@ -23,8 +23,9 @@ public sealed class ReadTool : ITool
 
     public string Description =>
         "Read a plain-text file (source code, txt, md, json, etc.). " +
+        "Use offset/limit on large files instead of loading entire huge files. " +
         "For PDF/Office/CAD, use the corresponding skill via exec. " +
-        "Path: workspace-relative or any absolute path. Supports ~.";
+        "Path: workspace-relative or absolute; supports ~.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

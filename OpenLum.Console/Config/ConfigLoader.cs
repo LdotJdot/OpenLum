@@ -169,7 +169,8 @@ public static class ConfigLoader
 
         return new WorkflowConfig
         {
-            Enabled = el.TryGetProperty("enabled", out var e) && e.GetBoolean(),
+            // Default on when key omitted; set "enabled": false to disable.
+            Enabled = !el.TryGetProperty("enabled", out var e) || e.GetBoolean(),
             RequirePlanForWrite = el.TryGetProperty("requirePlanForWrite", out var rp) ? rp.GetBoolean() : true,
             AutoVerifyAfterFirstWrite = el.TryGetProperty("autoVerifyAfterFirstWrite", out var av) && av.GetBoolean()
         };
@@ -267,8 +268,8 @@ public sealed class BrowserConfig
 /// </summary>
 public sealed class WorkflowConfig
 {
-    /// <summary>When true, tools are exposed in phases (Observe -> Act -> Verify).</summary>
-    public bool Enabled { get; init; } = false;
+    /// <summary>When true, tools are exposed in phases (Observe -> Act -> Verify). Default true (built-in).</summary>
+    public bool Enabled { get; init; } = true;
     /// <summary>When true, write-like tools are gated behind submit_plan/todo planning in Observe phase.</summary>
     public bool RequirePlanForWrite { get; init; } = true;
     /// <summary>If true, auto-switch to Verify after first write-like tool executes.</summary>

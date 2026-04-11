@@ -4,6 +4,7 @@ using OpenLum.Console.Config;
 using OpenLum.Console.Console;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.IO;
+using OpenLum.Console.Observability;
 using OpenLum.Console.Providers;
 using OpenLum.Console.Session;
 using OpenLum.Console.Tools;
@@ -25,6 +26,14 @@ public sealed class Application
         var config = ConfigLoader.Load();
         var workspaceDir = ResolveWorkspace(config.Workspace);
         Directory.CreateDirectory(workspaceDir);
+
+        var sessionLog = SessionRunLogger.TryCreate(workspaceDir, $"{config.Model.Provider}/{config.Model.Model}", out var sessionLogPath);
+        if (!string.IsNullOrEmpty(sessionLogPath))
+        {
+            System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+            System.Console.WriteLine($"Session log: {sessionLogPath}");
+            System.Console.ResetColor();
+        }
 
         var apiKey = config.Model.ApiKey?.Trim();
         if (string.IsNullOrEmpty(apiKey))
@@ -72,8 +81,8 @@ public sealed class Application
                 model,
                 maxMessagesBeforeCompact: config.Compaction.MaxMessagesBeforeCompact,
                 reserveRecent: config.Compaction.ReserveRecent,
-                collapseFailedAttempts: config.Compaction.CollapseFailedAttempts
-            );
+                collapseFailedAttempts: config.Compaction.CollapseFailedAttempts,
+                onCompactionSummary: summary => sessionLog?.WriteCompaction(summary));
         }
         baseTools.Register(
             new SessionsSpawnTool(
@@ -85,7 +94,9 @@ public sealed class Application
                 maxToolTurns: config.Agent.MaxToolTurns,
                 maxToolResultChars: config.Compaction.MaxToolResultChars > 0 ? config.Compaction.MaxToolResultChars : null,
                 maxFailedToolResultChars: config.Compaction.MaxFailedToolResultChars > 0 ? config.Compaction.MaxFailedToolResultChars : null,
-                useModelDecideAtLimit: config.Agent.TurnLimitStrategy == "model_decide")
+                useModelDecideAtLimit: config.Agent.TurnLimitStrategy == "model_decide",
+                sessionRunLogger: sessionLog,
+                workflow: config.Workflow)
         );
 
         IToolRegistry tools = new ToolPolicyFilter(baseTools, config.ToolPolicy);
@@ -102,28 +113,45 @@ public sealed class Application
             todoStore: todoStore,
             planStore: planStore,
             workflow: config.Workflow,
-            onToolExecuting: (name, args) =>
+            onToolStarting: (name, args) =>
             {
                 lock (ConsoleLock)
                 {
                     var prev = System.Console.ForegroundColor;
                     System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
-                    // Always start tool logs on a fresh line to avoid interleaving
                     System.Console.WriteLine();
-                    System.Console.WriteLine($"  → {name}({args})");
+                    System.Console.WriteLine($"  {ToolActivityFormatter.FormatStarting(name, args)}");
+                    System.Console.ForegroundColor = prev;
+                }
+            },
+            onToolCompleted: (name, args, success) =>
+            {
+                lock (ConsoleLock)
+                {
+                    var prev = System.Console.ForegroundColor;
+                    System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+                    System.Console.WriteLine($"  {ToolActivityFormatter.FormatCompleted(name, args, success)}");
                     System.Console.ForegroundColor = prev;
                 }
             },
             maxToolResultChars: config.Compaction.MaxToolResultChars,
             maxFailedToolResultChars: config.Compaction.MaxFailedToolResultChars > 0 ? config.Compaction.MaxFailedToolResultChars : null,
             maxToolTurns: config.Agent.MaxToolTurns,
-            useModelDecideAtLimit: config.Agent.TurnLimitStrategy == "model_decide"
+            useModelDecideAtLimit: config.Agent.TurnLimitStrategy == "model_decide",
+            runLogger: sessionLog
         );
 
         System.Console.WriteLine("OpenLum Console — generic agent shell. Use /help for commands.");
         System.Console.WriteLine();
 
-        return RunRepl(agent, session, workspaceDir, config.UserTimezone, todoStore, planStore);
+        try
+        {
+            return RunRepl(agent, session, workspaceDir, config.UserTimezone, todoStore, planStore);
+        }
+        finally
+        {
+            sessionLog?.Dispose();
+        }
     }
 
     private static int RunConfigDoctor()

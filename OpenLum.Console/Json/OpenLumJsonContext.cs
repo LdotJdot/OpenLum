@@ -9,6 +9,7 @@ namespace OpenLum.Console.Json;
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(OpenAICompletionResponse))]
+[JsonSerializable(typeof(OpenAIUsageDto))]
 [JsonSerializable(typeof(OpenAIChoice))]
 [JsonSerializable(typeof(OpenAIMessage))]
 [JsonSerializable(typeof(OpenAIToolCall))]

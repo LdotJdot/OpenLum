@@ -50,4 +50,19 @@ internal static class ToolArgHelpers
     {
         return args.GetValueOrDefault(key)?.ToString()?.Trim();
     }
+
+    /// <summary>
+    /// Reads a string from a JsonElement; accepts String or Number (models sometimes emit numeric ids).
+    /// </summary>
+    public static string? JsonElementAsString(JsonElement el)
+    {
+        return el.ValueKind switch
+        {
+            JsonValueKind.String => el.GetString(),
+            JsonValueKind.Number => el.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
 }

@@ -32,9 +32,9 @@ public sealed class SemanticSearchTool : ITool
     public string Name => "semantic_search";
 
     public string Description =>
-        "Heuristic semantic search (v0): find relevant files by meaning using keyword scoring over paths and contents. " +
-        "Returns top results with short snippets. Prefer this when you don't know exact symbols. " +
-        "Planned v1: add an index (inverted index or embeddings) for better recall and speed.";
+        "Heuristic semantic search (v0): keyword scoring over paths and contents; returns top snippets. " +
+        "Use for fuzzy or conceptual questions when you lack an exact grep pattern—not as an endless substitute for repeated grep. " +
+        "Planned v1: indexing for better recall and speed.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

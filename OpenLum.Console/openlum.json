@@ -32,5 +32,10 @@
     "maxToolTurns": 100,
     "turnLimitStrategy": "model_decide"
   },
+  "workflow": {
+    "enabled": true,
+    "requirePlanForWrite": true,
+    "autoVerifyAfterFirstWrite": false
+  },
   "workspace": "."
 }

@@ -3,6 +3,7 @@ using OpenLum.Console.Config;
 using OpenLum.Console.Compaction;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.Models;
+using OpenLum.Console.Observability;
 
 namespace OpenLum.Console.Agent;
 
@@ -11,8 +12,7 @@ namespace OpenLum.Console.Agent;
 /// </summary>
 public sealed class AgentLoop : IAgent
 {
-    // Intent/thinking strategy is now in SystemPromptBuilder's "## Execution Process" section
-    // to avoid redundant tokens between system prompt and every user message.
+    // Intent/thinking strategy lives in SystemPromptBuilder; optional <thinking> for complex tasks.
     private static string WrapUserInstruction(string userPrompt)
     {
         return (userPrompt ?? "").Trim();
@@ -25,17 +25,34 @@ public sealed class AgentLoop : IAgent
     private readonly Tools.TodoStore? _todoStore;
     private readonly Tools.PlanStore? _planStore;
     private readonly WorkflowConfig _workflow;
-    private readonly Action<string, string>? _onToolExecuting;
+    private readonly Action<string, string>? _onToolStarting;
+    private readonly Action<string, string, bool>? _onToolCompleted;
     private readonly int? _maxToolResultChars;
     private readonly int? _maxFailedToolResultChars;
     private readonly int _maxToolTurns;
     private readonly bool _useModelDecideAtLimit;
+    private readonly SessionRunLogger? _runLogger;
 
     private enum WorkflowPhase
     {
         Observe,
         Act,
         Verify
+    }
+
+    /// <summary>Read-only gather phase + browser + sub-agent; intersected with tool policy. Built-in default workflow starts here.</summary>
+    private static readonly HashSet<string> ObservePhaseAllowlist = BuildObservePhaseAllowlist();
+
+    private static HashSet<string> BuildObservePhaseAllowlist()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "grep", "glob", "semantic_search", "read", "read_many", "list_dir",
+            "memory_get", "memory_search", "todo", "submit_plan"
+        };
+        foreach (var name in ToolProfiles.Expand(["group:web", "group:sessions"]))
+            set.Add(name);
+        return set;
     }
 
     private WorkflowPhase _phase = WorkflowPhase.Act;
@@ -49,11 +66,13 @@ public sealed class AgentLoop : IAgent
         Tools.TodoStore? todoStore = null,
         Tools.PlanStore? planStore = null,
         WorkflowConfig? workflow = null,
-        Action<string, string>? onToolExecuting = null,
+        Action<string, string>? onToolStarting = null,
+        Action<string, string, bool>? onToolCompleted = null,
         int? maxToolResultChars = null,
         int? maxFailedToolResultChars = null,
         int maxToolTurns = 100,
-        bool useModelDecideAtLimit = true)
+        bool useModelDecideAtLimit = true,
+        SessionRunLogger? runLogger = null)
     {
         _model = model;
         _toolsBase = tools;
@@ -63,11 +82,29 @@ public sealed class AgentLoop : IAgent
         _todoStore = todoStore;
         _planStore = planStore;
         _workflow = workflow ?? new WorkflowConfig();
-        _onToolExecuting = onToolExecuting;
+        _onToolStarting = onToolStarting;
+        _onToolCompleted = onToolCompleted;
         _maxToolResultChars = maxToolResultChars;
         _maxFailedToolResultChars = maxFailedToolResultChars;
         _maxToolTurns = Math.Max(1, maxToolTurns);
         _useModelDecideAtLimit = useModelDecideAtLimit;
+        _runLogger = runLogger;
+    }
+
+    private static int ApproxChatChars(IReadOnlyList<ChatMessage> msgs)
+    {
+        var n = 0;
+        foreach (var m in msgs)
+        {
+            n += m.Content?.Length ?? 0;
+            if (m.ToolCalls is { Count: > 0 } tc)
+            {
+                foreach (var t in tc)
+                    n += t.Name.Length + (t.Arguments?.Length ?? 0);
+            }
+        }
+
+        return n;
     }
 
     public async Task<AgentTurnResult> RunAsync(
@@ -77,6 +114,7 @@ public sealed class AgentLoop : IAgent
     {
         ResetWorkflowForNewUserMessage();
         _session.Add(new ChatMessage { Role = MessageRole.User, Content = WrapUserInstruction(userPrompt) });
+        _runLogger?.WriteUserMessage(WrapUserInstruction(userPrompt));
 
         var maxTurns = _maxToolTurns;
         const int warningAt = 5; // Start warning this many turns before limit
@@ -92,6 +130,7 @@ public sealed class AgentLoop : IAgent
 
             var remaining = maxTurns - turn;
             var messages = BuildMessages(remaining <= warningAt ? remaining : null);
+            _runLogger?.WriteModelRound(turn, _phase.ToString(), messages.Count, ApproxChatChars(messages));
             var toolsForTurn = GetToolsForCurrentPhase();
             var toolDefs = toolsForTurn.All.Select(t => new ToolDefinition(
                 t.Name,
@@ -107,8 +146,11 @@ public sealed class AgentLoop : IAgent
             catch (Exception ex)
             {
                 System.Console.Error.WriteLine($"[Agent] Model error: {ex.GetType().Name}: {ex.Message}");
+                _runLogger?.WriteError("model.ChatAsync", ex);
                 return new AgentTurnResult(false, ex.Message);
             }
+
+            _runLogger?.WriteAssistantResponse(response.Content, response.ToolCalls, response.Usage);
 
             if (response.ToolCalls.Count == 0)
             {
@@ -129,6 +171,7 @@ public sealed class AgentLoop : IAgent
             _session.AddToolResults(results);
         }
 
+        _runLogger?.WriteLine("agent_run_finished: max_tool_turns_exceeded");
         return new AgentTurnResult(false, "Max tool turns exceeded.");
     }
 
@@ -138,6 +181,7 @@ public sealed class AgentLoop : IAgent
         IProgress<string>? contentProgress,
         CancellationToken ct)
     {
+        _runLogger?.WriteLine("turn_limit_reached: invoking limit_decision flow (pending tool_calls discarded for session protocol)");
         // IMPORTANT: 不要把带有 tool_calls 但尚未执行的 assistant 消息写回到会话里。
         // OpenAI 要求：一旦历史中出现带 tool_calls 的 assistant 消息，下一条必须是对应的 tool 消息。
         // 这里我们只是让模型做“决策”，不会真正执行这些 tool_calls，所以必须丢弃它们，只保留文字内容。
@@ -155,15 +199,20 @@ public sealed class AgentLoop : IAgent
 
         var toolsForTurn = GetToolsForCurrentPhase();
         var toolDefs = toolsForTurn.All.Select(t => new ToolDefinition(t.Name, t.Description, t.Parameters)).ToList();
+        var limitMsgs = BuildMessages(null);
+        _runLogger?.WriteModelRound(-1, _phase.ToString(), limitMsgs.Count, ApproxChatChars(limitMsgs));
         ModelResponse decision;
         try
         {
-            decision = await _model.ChatAsync(BuildMessages(null), toolDefs, contentProgress, ct);
+            decision = await _model.ChatAsync(limitMsgs, toolDefs, contentProgress, ct);
         }
         catch (Exception ex)
         {
+            _runLogger?.WriteError("model.ChatAsync(limit_decision)", ex);
             return new AgentTurnResult(false, $"Limit decision failed: {ex.Message}");
         }
+
+        _runLogger?.WriteAssistantResponse(decision.Content, decision.ToolCalls, decision.Usage);
 
         var content = decision.Content ?? "";
         if (content.Contains("[DECISION:ASK_USER]", StringComparison.OrdinalIgnoreCase))
@@ -190,12 +239,16 @@ public sealed class AgentLoop : IAgent
             });
             try
             {
-                var wrap = await _model.ChatAsync(BuildMessages(null), [], contentProgress, ct);
+                var wrapMsgs = BuildMessages(null);
+                _runLogger?.WriteModelRound(-2, _phase.ToString(), wrapMsgs.Count, ApproxChatChars(wrapMsgs));
+                var wrap = await _model.ChatAsync(wrapMsgs, [], contentProgress, ct);
+                _runLogger?.WriteAssistantResponse(wrap.Content, wrap.ToolCalls, wrap.Usage);
                 _session.AddAssistant(wrap.Content, null);
                 return new AgentTurnResult(true, null);
             }
             catch (Exception ex)
             {
+                _runLogger?.WriteError("model.ChatAsync(post_continue_wrap)", ex);
                 return new AgentTurnResult(false, $"Post-continue summary failed: {ex.Message}");
             }
         }
@@ -218,14 +271,17 @@ public sealed class AgentLoop : IAgent
         });
 
         var wrapMessages = BuildMessages(warningTurnsRemaining: null);
+        _runLogger?.WriteModelRound(-3, _phase.ToString(), wrapMessages.Count, ApproxChatChars(wrapMessages));
         try
         {
             var wrap = await _model.ChatAsync(wrapMessages, [], contentProgress, ct);
+            _runLogger?.WriteAssistantResponse(wrap.Content, wrap.ToolCalls, wrap.Usage);
             _session.AddAssistant(wrap.Content, null);
             return new AgentTurnResult(true, null);
         }
         catch (Exception ex)
         {
+            _runLogger?.WriteError("model.ChatAsync(force_wrap_up)", ex);
             return new AgentTurnResult(false, $"Limit reached. Summarization failed: {ex.Message}");
         }
     }
@@ -245,9 +301,11 @@ public sealed class AgentLoop : IAgent
             sys += "\n\n[Workflow] ";
             sys += _phase switch
             {
-                WorkflowPhase.Observe => "Phase=OBSERVE. Use grep/glob/read/read_many/list_dir to gather context. Submit a short plan via submit_plan (or create TODOs) before using write-like tools.",
-                WorkflowPhase.Act => "Phase=ACT. You may edit files (prefer str_replace for small precise edits).",
-                WorkflowPhase.Verify => "Phase=VERIFY. Prefer read/grep/glob and (optionally) exec build/verify commands; avoid further edits unless necessary.",
+                WorkflowPhase.Observe =>
+                    "Phase=OBSERVE (default entry). Gather context with read-only tools (search, list, read, browser, sessions_spawn). " +
+                    "No write/str_replace/exec until you submit a short plan via submit_plan or create TODOs (when requirePlanForWrite is on).",
+                WorkflowPhase.Act => "Phase=ACT. You may edit files (prefer str_replace for small precise edits) and use exec when appropriate.",
+                WorkflowPhase.Verify => "Phase=VERIFY. Re-check with read/grep/glob; use exec for build/tests/skills; avoid further edits unless necessary.",
                 _ => "Phase=ACT."
             };
         }
@@ -281,7 +339,7 @@ public sealed class AgentLoop : IAgent
     /// <summary>Tools considered safe to run in parallel (read-only, no side effects).</summary>
     private static readonly HashSet<string> ReadLikeTools = new(StringComparer.OrdinalIgnoreCase)
     {
-        "read", "read_many", "list_dir", "grep", "glob", "memory_get", "memory_search"
+        "read", "read_many", "list_dir", "grep", "glob", "semantic_search", "memory_get", "memory_search"
     };
 
     /// <summary>
@@ -296,7 +354,7 @@ public sealed class AgentLoop : IAgent
             var singleResults = new List<ToolResult>(1);
             foreach (var tc in toolCalls)
             {
-                _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
+                _onToolStarting?.Invoke(tc.Name, tc.Arguments);
                 singleResults.Add(await ExecuteToolAsync(tc, ct));
             }
             return singleResults;
@@ -315,7 +373,7 @@ public sealed class AgentLoop : IAgent
             if (!ReadLikeTools.Contains(toolCalls[i].Name))
             {
                 var tc = toolCalls[i];
-                _onToolExecuting?.Invoke(tc.Name, tc.Arguments);
+                _onToolStarting?.Invoke(tc.Name, tc.Arguments);
                 results[i] = await ExecuteToolAsync(tc, ct);
                 i++;
                 continue;
@@ -328,7 +386,7 @@ public sealed class AgentLoop : IAgent
             var end = i; // exclusive
 
             for (var j = start; j < end; j++)
-                _onToolExecuting?.Invoke(toolCalls[j].Name, toolCalls[j].Arguments);
+                _onToolStarting?.Invoke(toolCalls[j].Name, toolCalls[j].Arguments);
 
             var tasks = new Task<ToolResult>[end - start];
             for (var j = start; j < end; j++)
@@ -347,66 +405,91 @@ public sealed class AgentLoop : IAgent
 
     private async Task<ToolResult> ExecuteToolAsync(ToolCall tc, CancellationToken ct)
     {
-        if (!IsToolAllowedInCurrentPhase(tc.Name))
-        {
-            return new ToolResult
-            {
-                ToolCallId = tc.Id,
-                Content = $"Error: tool '{tc.Name}' is not allowed in workflow phase '{_phase}'. " +
-                          "Use grep/glob/read first and submit a plan via submit_plan (or todo) before write-like tools.",
-                IsError = true
-            };
-        }
-
-        var tool = _toolsBase.Get(tc.Name);
-        if (tool is null)
-        {
-            return new ToolResult { ToolCallId = tc.Id, Content = $"Error: unknown tool '{tc.Name}'", IsError = true };
-        }
-
         // DeepSeek (and some providers) may return empty string for tool args; normalize to "{}"
         var argsJson = string.IsNullOrWhiteSpace(tc.Arguments) ? "{}" : tc.Arguments;
-        Dictionary<string, object?> args;
+        ToolResult? res = null;
+        string? logBody = null;
+        _runLogger?.WriteToolStarting(tc.Name, argsJson);
         try
         {
-            using var doc = JsonDocument.Parse(argsJson);
-            args = new Dictionary<string, object?>();
-            foreach (var prop in doc.RootElement.EnumerateObject())
-                args[prop.Name] = prop.Value.Clone();
-        }
-        catch (JsonException)
-        {
-            args = new Dictionary<string, object?>();
-        }
-        catch
-        {
-            args = new Dictionary<string, object?>();
-        }
-
-        try
-        {
-            var result = await tool.ExecuteAsync(args, ct);
-            var content = result ?? string.Empty;
-            // sessions_spawn 的返回是子 agent 的完整回复，不截断，确保主 agent 能完整看到子 agent 的结论，避免重复派发任务
-            if (tc.Name != "sessions_spawn" && _maxToolResultChars is { } limit && limit > 0 && content.Length > limit)
+            if (!IsToolAllowedInCurrentPhase(tc.Name))
             {
-                content = content[..limit];
+                res = new ToolResult
+                {
+                    ToolCallId = tc.Id,
+                    Content = $"Error: tool '{tc.Name}' is not allowed in workflow phase '{_phase}'. " +
+                              "Use grep/glob/read first and submit a plan via submit_plan (or todo) before write-like tools.",
+                    IsError = true
+                };
+                logBody = res.Content;
+                return res;
             }
 
-            return new ToolResult { ToolCallId = tc.Id, Content = content, IsError = false };
-        }
-        catch (Exception ex)
-        {
-            System.Console.Error.WriteLine($"[Tool] {tc.Name} error: {ex.GetType().Name}: {ex.Message}");
-            return new ToolResult
+            var tool = _toolsBase.Get(tc.Name);
+            if (tool is null)
             {
-                ToolCallId = tc.Id,
-                Content = $"Error: {ex.Message}",
-                IsError = true
-            };
+                res = new ToolResult { ToolCallId = tc.Id, Content = $"Error: unknown tool '{tc.Name}'", IsError = true };
+                logBody = res.Content;
+                return res;
+            }
+
+            Dictionary<string, object?> args;
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                args = new Dictionary<string, object?>();
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                    args[prop.Name] = prop.Value.Clone();
+            }
+            catch (JsonException)
+            {
+                args = new Dictionary<string, object?>();
+            }
+            catch
+            {
+                args = new Dictionary<string, object?>();
+            }
+
+            try
+            {
+                var result = await tool.ExecuteAsync(args, ct);
+                var raw = result ?? string.Empty;
+                logBody = raw;
+                var content = raw;
+                // sessions_spawn 的返回是子 agent 的完整回复，不截断，确保主 agent 能完整看到子 agent 的结论，避免重复派发任务
+                if (tc.Name != "sessions_spawn" && _maxToolResultChars is { } limit && limit > 0 && content.Length > limit)
+                {
+                    content = content[..limit];
+                }
+
+                res = new ToolResult { ToolCallId = tc.Id, Content = content, IsError = false };
+                return res;
+            }
+            catch (Exception ex)
+            {
+                System.Console.Error.WriteLine($"[Tool] {tc.Name} error: {ex.GetType().Name}: {ex.Message}");
+                res = new ToolResult
+                {
+                    ToolCallId = tc.Id,
+                    Content = $"Error: {ex.Message}",
+                    IsError = true
+                };
+                logBody = res.Content;
+                return res;
+            }
         }
         finally
         {
+            if (res is not null)
+            {
+                var content = res.Content ?? "";
+                var uiSuccess = !res.IsError
+                                && !content.TrimStart().StartsWith("Error:", StringComparison.OrdinalIgnoreCase)
+                                && !content.TrimStart().StartsWith("错误", StringComparison.Ordinal);
+                _onToolCompleted?.Invoke(tc.Name, argsJson, uiSuccess);
+                _runLogger?.WriteToolCompleted(tc.Name, argsJson, uiSuccess, logBody ?? content);
+            }
+
             if (_workflow.Enabled && _workflow.AutoVerifyAfterFirstWrite && _phase == WorkflowPhase.Act)
             {
                 if (string.Equals(tc.Name, "write", StringComparison.OrdinalIgnoreCase)
@@ -454,13 +537,10 @@ public sealed class AgentLoop : IAgent
         // Minimal per-phase allowlist, intersected with base tool policy.
         var allow = _phase switch
         {
-            WorkflowPhase.Observe => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "grep", "glob", "read", "read_many", "list_dir", "memory_get", "memory_search", "todo", "submit_plan"
-            },
+            WorkflowPhase.Observe => new HashSet<string>(ObservePhaseAllowlist, StringComparer.OrdinalIgnoreCase),
             WorkflowPhase.Verify => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "grep", "glob", "read", "read_many", "list_dir", "memory_get", "memory_search", "todo", "exec"
+                "grep", "glob", "semantic_search", "read", "read_many", "list_dir", "memory_get", "memory_search", "todo", "exec"
             },
             _ => null
         };

@@ -33,10 +33,12 @@ public sealed class GrepTool : ITool
 
     public string Description =>
         "Search file contents using regex. Returns matching lines with file paths and line numbers. " +
-        "Path defaults to workspace root; any absolute path is also accepted. " +
-        "Use glob parameter to filter file types (e.g. \"*.cs\"). " +
+        "Path defaults to workspace root; absolute paths are accepted. " +
+        "Use glob to limit file types (e.g. \"*.cs\", \"*.md\"); avoid turning glob into huge path-only patterns. " +
         "Use output_mode=\"files_with_matches\" for file-list-only discovery. " +
-        "Use this tool instead of exec+rg for text search.";
+        "Prefer this over exec/PowerShell (Get-ChildItem, Select-String) for text search. " +
+        "Zero matches is a valid outcome—do not compensate with giant alternation regexes, single-character patterns, or unrelated entities. " +
+        "If a literal phrase fails, try at most one or two tight variants (typo, split) or one semantic_search pass, then stop and report what you tried.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

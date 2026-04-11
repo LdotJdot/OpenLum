@@ -31,8 +31,9 @@ public sealed class GlobTool : ITool
 
     public string Description =>
         "Find files by glob pattern. Returns matching file paths sorted by modification time (newest first). " +
-        "Path defaults to workspace root; any absolute path is also accepted. " +
-        "Patterns not starting with \"**/\" are auto-prepended for recursive matching.";
+        "Path defaults to workspace root; absolute paths are accepted. " +
+        "Patterns not starting with \"**/\" are auto-prepended for recursive matching. " +
+        "Prefer simple extension patterns (e.g. \"*.md\") for broad discovery.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [
