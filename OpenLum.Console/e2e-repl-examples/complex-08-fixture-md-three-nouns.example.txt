@@ -1,0 +1,5 @@
+不要 sessions_spawn。
+
+对 `OpenLum.Console/e2e-repl-examples/fixture-md-batch`：先用 **glob** 列出全部 `*.md`，再用 **read_many** 一次性读完这些文件（路径需与 glob 一致）。
+最后一行只输出三个中文名词，用中文顿号 `、` 分隔，无空格：分别概括 alpha.md、beta.md、gamma.md 的主题（顺序与文件名字母序一致）。前面不要长篇推理。不要用 markdown 围栏。
+

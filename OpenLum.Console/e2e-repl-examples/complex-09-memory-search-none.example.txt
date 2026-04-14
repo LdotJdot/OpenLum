@@ -1,0 +1,6 @@
+不要 sessions_spawn。
+
+调用 **memory_search**：query=`zzzzOpenLumE2E_NoSuchMemoryToken9999`，maxResults=5。
+若返回的 JSON 中 `results` 数组为空，最后一行只输出大写 `NONE`；否则最后一行只输出命中条数（阿拉伯数字）。
+不要用 exec。
+

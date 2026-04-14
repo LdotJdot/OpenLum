@@ -1,0 +1,5 @@
+不要 sessions_spawn。
+
+1) grep：pattern=FormatReadCompleted，path=OpenLum.Core/Console，glob=*.cs，head_limit 20。
+2) read：OpenLum.Core/Console/ToolActivityFormatter.cs，offset=125，limit=35。
+用两条中文要点：grep 命中数；read 窗口是否覆盖 FormatReadCompleted 方法主体。

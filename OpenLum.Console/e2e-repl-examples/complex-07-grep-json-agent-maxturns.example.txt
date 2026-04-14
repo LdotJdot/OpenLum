@@ -1,0 +1,5 @@
+不要 sessions_spawn。
+
+用 **grep** 搜索 **单个文件** `OpenLum.Console/openlum.json`，pattern=`maxToolTurns`，output_mode=`content`，head_limit=5（不要用 read 替代，除非 grep 失败）。
+最后一行只输出一个阿拉伯数字：`maxToolTurns` 的整型取值（从源码行中解析）。若未找到则输出 `0`。
+

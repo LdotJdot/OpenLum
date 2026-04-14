@@ -1,0 +1,8 @@
+不要 sessions_spawn。
+
+用 **read_many** 一次性读取（offset=1，limit=12）：
+- `OpenLum.Core/Tools/GrepTool.cs`
+- `OpenLum.Core/Tools/GlobTool.cs`
+
+最后一行只输出 `YES` 或 `NO`：两文件第 1 行是否完全相同（逐字符比较）。前面可用一两句中文说明依据。不要用 markdown 围栏。
+

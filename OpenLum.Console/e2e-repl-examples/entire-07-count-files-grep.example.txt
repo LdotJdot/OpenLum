@@ -1,0 +1,6 @@
+不要 sessions_spawn。
+
+在目录 OpenLum.Core/Agent 下：有多少个 .cs 文件的内容里至少出现过一次子串 "ToolResult"？
+按「文件」计数（同一文件多次命中只计 1）。优先一次 grep：output_mode=files_with_matches + path/glob 限定范围；数输出中的文件路径行数即可作答。不要 list_dir 递归扫全仓库；在结果已清晰时不要重复调用相同范围的 grep。
+
+最后只输出一个阿拉伯数字，前后不要其它文字。

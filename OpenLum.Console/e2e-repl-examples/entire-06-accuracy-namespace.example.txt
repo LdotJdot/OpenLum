@@ -1,0 +1,6 @@
+不要 sessions_spawn。
+
+1) grep：pattern=class SessionRunLogger，path=OpenLum.Core，glob=*.cs，output_mode=files_with_matches（或 content，二选一即可）。
+2) read：上一步确定的单个文件相对路径，offset=1，limit=15。
+
+最后单独一行输出该文件声明的完整 namespace（与源码一致，例如 namespace X.Y.Z;）。

@@ -1,0 +1,90 @@
+OpenLum — REPL 案例与「大哥级」效率对标（可复现）
+
+说明
+- 「大哥」= 少轮次、少 token、选对工具、不滥用子会话。以下用脚本可回归对比。
+- 整段多行一条消息：--repl-file <path> --repl-file-entire
+- 多轮一行一条：--repl-file <path>（每行一轮，末尾 /quit）
+
+案例文件（整文件单轮，建议用 --repl-file-entire）
+- entire-01-read-not-list.example.txt
+  目标：给定具体文件路径时优先 read，不要整目录 list_dir。
+- entire-02-grep-then-read.example.txt
+  目标：先 grep 定位，再 read 小窗口，避免整文件读。
+- entire-03-listdir-glob.example.txt
+  目标：浅层 list_dir + name_glob 过滤，不扫全目录。
+- entire-04-readonly-batch.example.txt
+  目标：一轮内 grep + read_many（或并行 read），无 sessions_spawn。
+- entire-05-workflow-exec.example.txt
+  目标：需写/执行时：submit_plan → exec（或 write），符合 workflow。
+
+复杂任务（准确率 + 效率，建议单独跑 scripts\run-e2e-complex-batch.ps1 快速迭代）
+- entire-06-accuracy-namespace.example.txt
+  目标：grep 定位类文件 → read 窗口 → 输出与源码一致的 namespace。
+  参考：namespace OpenLum.Console.Observability;
+- entire-07-count-files-grep.example.txt
+  目标：仅在 OpenLum.Core/Agent 下按文件统计含 "ToolResult" 的 .cs 个数；优先 grep files_with_matches，避免 list_dir 递归。
+  参考：1
+- entire-08-glob-read-efficiency.example.txt
+  目标：glob 找 SystemPromptBuilder.cs → read 前 30 行 → 是否含以 "## Efficiency" 开头的行。
+  参考：否（"## Efficiency" 在源码约第 54 行，read 窗口 L1–30 不包含；勿凭记忆答「是」）
+- lines-03-three-turn-accuracy.example.txt
+  目标：多轮：grep 找 SessionRunLogger 路径 → read 常量 DefaultMaxToolBodyChars 数值。
+  参考：500000（日志/输出中可能无下划线）
+- entire-09-parallel-folder-md.example.txt
+  目标：文件夹内多 .md → glob + read_many；read_many 一次读完多文件。日志中常见两轮（先 glob 再 read_many）；若模型同一轮发出 glob+read_many 则宿主并行执行。
+- entire-11-read-docx-sample-math.example.txt
+  目标：绝对路径 .docx → **read** 提取，不用 exec。
+- entire-12-fly-search-craes.example.txt / entire-13-fly-multi-search.example.txt
+  目标：桌面目录下 **grep** 检索，不用 PowerShell/exec。
+
+案例文件（多轮）
+- lines-02-two-turn.example.txt
+  目标：两轮对话 + /quit，测会话连贯。
+
+运行示例（仓库根目录）
+  dotnet run --project OpenLum.Console\OpenLum.Console.csproj -- ^
+    --repl-file OpenLum.Console\e2e-repl-examples\entire-01-read-not-list.example.txt --repl-file-entire
+
+批量（PowerShell，路径已写对）
+  .\OpenLum.Console\scripts\run-e2e-repl-batch.ps1
+    → 等同 run-e2e-repl-full.ps1 -SkipHeavy（全量除 entire-10）
+  .\OpenLum.Console\scripts\run-e2e-repl-full.ps1
+    → 含 entire-10；加 -SkipHeavy 则跳过 entire-10
+  .\OpenLum.Console\scripts\run-e2e-complex-batch.ps1
+    （子集：06-09 + lines-03，快速）
+  .\OpenLum.Console\scripts\run-e2e-repl-complex10.ps1
+    （complex-01..10：多工具链组合，与 entire 互补；参考最后一行可机读输出）
+  .\OpenLum.Console\scripts\run-e2e-repl-complex10.ps1 -IncludeLines04
+    （另加 lines-04：四轮 glob→grep→read→Grepped）
+  complex-01 参考：grep count 对 `public sealed class` 求和≈18（Tools 目录）。
+  complex-04 参考：M=14（仅 *Tool.cs），N=5（Tests 中含 [Fact] 的文件数）。
+
+日志粗验（轮次与 spawn）
+  .\OpenLum.Console\scripts\verify-e2e-logs.ps1
+  .\OpenLum.Console\scripts\verify-e2e-logs.ps1 -LogDate 2026-04-14
+
+验收（查当日日志）：assistant_tool_calls 不应出现 sessions_spawn（除非用例明确要求）。
+  PowerShell: Get-ChildItem .openlum\logs -Recurse -Filter *.log | Select-String "assistant_tool_calls: sessions_spawn"
+
+准确率：对照上表「参考」人工扫 assistant 最终回复；效率：同一会话 ToolRounds/ModelTurns 越少越好（无硬性上限，用于对比迭代）。
+
+系统提示里已增加 **## Efficiency (tokens & turns)**（抽象规则，与具体工具 description 一致）。
+工具层已有：list_dir name_glob、read 文案、grep/glob 状态行说明、sessions_spawn 描述等。
+
+配置侧（openlum.json）
+- compaction.maxToolResultChars / maxFailedToolResultChars：控制进历史的工具结果长度。
+- tools.deny：可去掉不用的浏览器或 sessions_spawn 等以缩小 schema、省 token。
+- conversation.autoSave + path：每轮用户对话结束后自动写入 .openlum（相对 workspace）。
+- 环境变量 OPENLUM_CONVERSATION_FILE：覆盖自动保存路径。
+- 续聊：openlum-console.exe --continue path.openlum，或 openlum-console.exe path.openlum（简写）。
+- promptOverlay：可选字符串，追加在固定系统提示之后（## Config overlay），用于部署/团队约束；不写具体工具名，避免与 **Tools** 重复；工具用法仍以各工具 description 为准。
+
+workflow（openlum.json）
+- requirePlanForWrite：为 true 时，写文件类工具需先 submit_plan 或 TODO 进入 Act；与 exec 无关（见 allowExecInObserve）。
+- allowExecInObserve：默认 true，Observe 阶段即可 exec（少一轮规划）；设 false 则恢复「exec 需进 Act」的旧行为。
+
+与 Cursor 类环境类似的层次
+- 固定系统提示：角色、流程、安全、抽象效率原则（OpenLum：SystemPromptBuilder）。
+- 工具层：名称 + 参数 + 怎么用（各 ITool.Description）。
+- 任务层：用户一句话 / 脚本 / Skill（领域步骤），不要把领域步骤写进固定系统提示。
+- 可选 promptOverlay：统一注入团队规范（仍建议保持抽象）。

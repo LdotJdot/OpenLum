@@ -4,9 +4,39 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Keep namespaces as OpenLum.Console.* so existing code can reuse types -->
+    <!-- Keep namespaces as OpenLum.Console.* so hosts and tests can share types -->
     <RootNamespace>OpenLum.Console</RootNamespace>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
-</Project>
+  <ItemGroup>
+    <!-- None (not Content) so .exe/.dll under Skills/InternalTools are copied -->
+    <None Include="Skills\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="InternalTools\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
 
+  <Target Name="CopySkillsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_SkillsFiles Include="$(ProjectDir)Skills\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SkillsFiles)"
+          DestinationFiles="@(_SkillsFiles->'$(PublishDir)Skills\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyInternalToolsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_InternalToolFiles Include="$(ProjectDir)InternalTools\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_InternalToolFiles)"
+          DestinationFiles="@(_InternalToolFiles->'$(PublishDir)InternalTools\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -1,0 +1,6 @@
+不要 sessions_spawn。
+
+用尽量少的工具调用完成：
+1) glob：pattern=**/GrepTool.cs，path=OpenLum.Core
+2) read_many：paths 同时包含 OpenLum.Core/Tools/GrepTool.cs 与 OpenLum.Core/Tools/GlobTool.cs，offset=1，limit=5
+最后只输出一句中文结论：两个文件前几行是否都是 using 声明。不要输出分步推理、不要用 markdown 代码围栏（```）。

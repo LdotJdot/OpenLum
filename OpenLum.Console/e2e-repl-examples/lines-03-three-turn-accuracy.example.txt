@@ -1,0 +1,3 @@
+不要 sessions_spawn。第一轮：grep pattern=DefaultMaxToolBodyChars path=OpenLum.Core glob=*SessionRunLogger*.cs output_mode=files_with_matches。用一句中文写出命中文件的仓库相对路径（单一路径）。
+第二轮：read 第一轮的路径 offset=1 limit=25。单独一行只输出 DefaultMaxToolBodyChars 常量后的整型数值（阿拉伯数字，无其它字符）。
+/quit

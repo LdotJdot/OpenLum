@@ -1,0 +1,7 @@
+不要 sessions_spawn。
+
+1) **glob**：pattern=`**/Application.cs`，path=`.`，head_limit=5。
+2) 取 **第一条** 命中路径，用 **read** 读取 offset=165，limit=40（若文件较短则自动改用 offset=150，limit=50，并在汇总里说明）。
+
+最后一行只输出 `YES` 或 `NO`：该窗口文本中是否出现子串 `Register`（大小写敏感）。不要用 ``` 围栏。
+

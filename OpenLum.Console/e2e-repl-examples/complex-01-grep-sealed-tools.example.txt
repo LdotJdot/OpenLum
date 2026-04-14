@@ -1,0 +1,12 @@
+不要 sessions_spawn。
+
+
+
+在仓库内用 **grep**（不要用 exec）：path=`OpenLum.Core/Tools`，glob=`*.cs`，pattern=`public sealed class`，output_mode=`count`。
+
+对工具返回的每个文件的匹配数求和（同一相对路径只计一次该文件的 count）。
+最后一行只输出一个阿拉伯数字：上述总和（不要其它文字）。
+
+汇总用纯文本短句即可，不要用 markdown 标题或 ``` 围栏。
+
+

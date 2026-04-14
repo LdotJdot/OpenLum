@@ -1,0 +1,8 @@
+不要 sessions_spawn。
+
+任务：
+1) 分析目录 `D:\Desktop\fly报奖\support data` 下全部 `.md` 文件各自主题与要点（可概括，不必逐字）。用户已给出完整目录路径时，不必先递归列出整棵目录树；可直接按扩展名筛选目标文件再读。
+2) 将「汇总分析」写成 Markdown，保存到工作区文件：`OpenLum.Console/e2e-repl-examples/out-fly-support-summary.md`（UTF-8）。
+3) 最后用几条中文说明：共用了几轮工具、主要用了哪些类型的操作（概括即可）。
+
+效率期望：尽量少轮次；多文件时优先批读/并行只读步骤，不要对同一目录反复无差别列举。

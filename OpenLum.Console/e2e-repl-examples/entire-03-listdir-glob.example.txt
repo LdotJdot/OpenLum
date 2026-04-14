@@ -1,0 +1,4 @@
+不要 sessions_spawn。
+
+list_dir：path=OpenLum.Core/Tools，recursive=false，name_glob=*Tool.cs
+只回答：匹配到多少个条目（文件名列表可省略，只给数字）。

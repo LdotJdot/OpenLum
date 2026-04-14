@@ -1,0 +1,6 @@
+不要 sessions_spawn。
+
+用 **exec** 在仓库根目录执行一条命令：`dotnet sln OpenLum.Console.sln list`（不要换行、不要额外参数）。
+根据命令输出：最后一行只输出一个阿拉伯数字——解决方案中列出的 **项目** 个数（不计 `Project(s)`、`----------` 等表头分隔行，只数 `.csproj` 路径行）。
+若命令失败，最后一行只输出 `ERROR`。
+

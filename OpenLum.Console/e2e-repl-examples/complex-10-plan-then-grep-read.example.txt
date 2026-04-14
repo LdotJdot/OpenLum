@@ -1,0 +1,8 @@
+不要 sessions_spawn。
+
+在启用 workflow 的前提下：先 **submit_plan**，content 单行：`E2E 只读：确认 WorkspacePathResolver 出现位置`。
+然后 **grep**：pattern=`class WorkspacePathResolver`，path=`OpenLum.Core`，glob=`*.cs`，output_mode=`files_with_matches`，head_limit=20。
+再对 **第一个** 命中文件 **read**：offset=1，limit=18。
+
+最后一行只输出该文件顶部的 `namespace ...;` 整行（与源码一致，含分号）。若 grep 无命中则输出 `NO_MATCH`。不要用 markdown 围栏。
+

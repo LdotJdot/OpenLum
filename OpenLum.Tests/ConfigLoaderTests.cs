@@ -25,6 +25,23 @@ public class ConfigLoaderTests
     }
 
     [Fact]
+    public void Load_Workflow_AllowExecInObserve_DefaultsTrueWhenKeyMissing()
+    {
+        var temp = Directory.CreateTempSubdirectory();
+        var path = Path.Combine(temp.FullName, "openlum.json");
+        try
+        {
+            File.WriteAllText(path, """{"workflow":{"enabled":true,"requirePlanForWrite":true}}""");
+            var cfg = ConfigLoader.Load(temp.FullName);
+            Assert.True(cfg.Workflow.AllowExecInObserve);
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Fact]
     public void Load_UsesStrictConfigEnv_ToFailOnInvalidJson()
     {
         var temp = Directory.CreateTempSubdirectory();

@@ -12,12 +12,12 @@
 
 - **Agent loop** — ReAct-style loop, tool calling, streaming, with configurable tool-turn limits and “model decide at limit”.
 - **Native tools (Tier-1)** — Optimized for code/text workflows:
-  - File & edit: `read`, `read_many`, `write`, `str_replace`, `list_dir`, `todo`, `submit_plan`
-  - Search: `grep`, `glob`, `semantic_search` (v0 heuristic)
+  - File & edit: `read`, `read_many`, `write`, `str_replace`, `text_edit`, `list_dir`, `todo`, `submit_plan`
+  - Search: `grep`, `glob`
   - Runtime: `exec`
   - Memory: `memory_get`, `memory_search`
   - Sub-agents: `sessions_spawn`
-- **Search → Read → Edit workflow** — Encourages `glob/semantic_search` → `grep` → `read(offset/limit)` → `str_replace` / `write`, with read-like tools executed in parallel for speed.
+- **Search → Read → Edit workflow** — Encourages `glob` → `grep` → `read(offset/limit)` → `str_replace` / `text_edit` / `write`, with read-like tools executed in parallel for speed.
 - **Workflow phases (optional)** — Observable / Act / Verify phases with per-phase tool allowlists and optional “plan required before writes”.
 - **Skills** — External skills from `Skills/` (see [Skill execution](#skill-execution-extension))
 - **Session compaction** — Optional context summarization
@@ -58,7 +58,7 @@ Skills extend the agent without new C# tools:
 3. **Prompt** — Skill list (name, description, path to `SKILL.md`) is injected into the system prompt. The model is told to use the **read** tool to load a skill’s `SKILL.md` when needed, and to use **exec** to run commands (e.g. skill dir exes or `agent-browser ...`). Never infer exe names from skill names; always read `SKILL.md` first.
 
 4. **Execution** — The model reads `SKILL.md` for usage and paths, then runs:
-   - Executables under the skill folder (e.g. `Skills/read/read-pdf.exe`), or
+   - Bundled executables under `InternalTools/` (e.g. PDF extractors under `InternalTools/read/`), or skill-scoped exes under `Skills/`, or
    - Shell commands (e.g. `agent-browser open --headed "https://example.com"`).
 
 Adding a skill: add a folder under `OpenLum.Console/Skills/<SkillName>/` with `SKILL.md` (and optional exes). It is copied to output/publish automatically.
@@ -168,12 +168,12 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 
 - **Agent 循环** — ReAct 风格循环、工具调用、流式输出，支持可配置的工具调用轮数与“由模型在上限时决策”。
 - **原生工具（Tier-1）** — 针对代码/文本场景做了窄接口优化：
-  - 文件与编辑：`read`、`read_many`、`write`、`str_replace`、`list_dir`、`todo`、`submit_plan`
-  - 搜索：`grep`、`glob`、`semantic_search`（v0 启发式语义检索）
+  - 文件与编辑：`read`、`read_many`、`write`、`str_replace`、`text_edit`、`list_dir`、`todo`、`submit_plan`
+  - 搜索：`grep`、`glob`
   - 运行：`exec`
   - 记忆：`memory_get`、`memory_search`
   - 子会话：`sessions_spawn`
-- **Search → Read → Edit 工作流** — 鼓励 `glob/semantic_search` → `grep` → `read(offset/limit)` → `str_replace` / `write` 的模式，read 类工具一轮内可并行执行以降低总耗时。
+- **Search → Read → Edit 工作流** — 鼓励 `glob` → `grep` → `read(offset/limit)` → `str_replace` / `text_edit` / `write` 的模式，read 类工具一轮内可并行执行以降低总耗时。
 - **可选阶段工作流** — Observe / Act / Verify 阶段化暴露工具，可配置“写操作前必须先提交计划/维护 TODO 列表”。
 - **技能（Skills）** — 从 `Skills/` 加载外部能力（见 [Skill 执行扩展](#skill-执行扩展)）
 - **会话压缩** — 可选上下文摘要
@@ -214,7 +214,7 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 3. **注入** — 技能列表（name、description、SKILL.md 路径）写入 system prompt。模型被要求：需要时用 **read** 工具读取该技能的 `SKILL.md`，用 **exec** 执行命令（如技能目录下的 exe 或 `agent-browser ...`）。禁止根据技能名猜测 exe 名，必须先读 `SKILL.md`。
 
 4. **执行** — 模型按 `SKILL.md` 的用法与路径执行：
-   - 技能目录下的可执行文件（如 `Skills/read/read-pdf.exe`），或
+   - 宿主内置目录 `InternalTools/` 下的可执行文件（如 `InternalTools/read/...` 的提取器），或 `Skills/` 下的技能专用 exe，或
    - Shell 命令（如 `agent-browser open --headed "https://example.com"`）。
 
 新增技能：在 `OpenLum.Console/Skills/<技能名>/` 下放 `SKILL.md`（及可选 exe），构建/发布时会自动复制。

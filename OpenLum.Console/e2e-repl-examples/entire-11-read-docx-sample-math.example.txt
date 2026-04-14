@@ -1,0 +1,3 @@
+不要 sessions_spawn。
+
+用 **read** 工具读取文件 `D:\Desktop\Sample_Math_Regression.docx` 的开头一段提取文本（默认 offset/limit 即可），用两三句中文说明：文件看起来是什么内容（例如数学/回归相关）。不要使用 exec、不要自己编造命令去打开 Word。

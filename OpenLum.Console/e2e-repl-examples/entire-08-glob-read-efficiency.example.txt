@@ -1,0 +1,6 @@
+不要 sessions_spawn。
+
+1) glob：pattern=**/SystemPromptBuilder.cs，path=OpenLum.Core
+2) read：glob 返回的相对路径之一，offset=1，limit=30
+
+仅回答：在前 30 行中，是否存在恰好一行以 "## Efficiency" 开头（只答「是」或「否」，不要解释）。

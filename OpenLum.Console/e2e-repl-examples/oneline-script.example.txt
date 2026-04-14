@@ -1,0 +1,2 @@
+用一句话说明 list_dir 的 name_glob 在什么条件下可用。
+/quit

@@ -17,7 +17,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OpenLum.Core\OpenLum.Core.csproj" />
-    <ProjectReference Include="..\OpenLum.Console\OpenLum.Console.csproj" />
   </ItemGroup>
 
 </Project>

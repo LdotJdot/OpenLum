@@ -25,8 +25,14 @@
   },
   "compaction": {
     "enabled": true,
-    "maxMessagesBeforeCompact": 30,
-    "reserveRecent": 10
+    "maxMessagesBeforeCompact": 28,
+    "reserveRecent": 10,
+    "maxToolResultChars": 10000,
+    "maxFailedToolResultChars": 400
+  },
+  "conversation": {
+    "autoSave": true,
+    "path": ".openlum/conversations/latest.openlum"
   },
   "agent": {
     "maxToolTurns": 100,
@@ -35,7 +41,10 @@
   "workflow": {
     "enabled": true,
     "requirePlanForWrite": true,
+    "allowExecInObserve": true,
+    "requireThinkingBeforeAct": false,
     "autoVerifyAfterFirstWrite": false
   },
-  "workspace": "."
+  "workspace": ".",
+  "promptOverlay": ""
 }

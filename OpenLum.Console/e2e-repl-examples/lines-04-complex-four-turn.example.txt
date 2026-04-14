@@ -1,0 +1,6 @@
+不要 sessions_spawn。第一轮：glob pattern=**/ToolPolicyFilterTests.cs path=OpenLum.Tests head_limit=3。只输出第一个命中的仓库相对路径一行（无其它文字）。
+第二轮：grep pattern=class ToolPolicyFilterTests path=OpenLum.Tests glob=*.cs output_mode=files_with_matches。只输出命中文件个数（阿拉伯数字）。
+第三轮：read 第一轮给出的路径 offset=1 limit=40。只输出文件中第一个 [Fact] 测试方法的方法名（单个标识符，无括号）。
+第四轮：只输出一个英文单词：grep 工具完成时控制台状态行通常以哪个动词开头（与 Grepped 同类）。
+/quit
+

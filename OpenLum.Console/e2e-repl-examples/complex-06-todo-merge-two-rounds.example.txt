@@ -1,0 +1,8 @@
+不要 sessions_spawn。
+
+在同一轮对话中依次调用 **todo**（两次）：
+1) `merge=false`，todos 含两条：`id=e2e-a` pending；`id=e2e-b` pending。
+2) `merge=true`，仅更新 `e2e-a` 为 `completed`（content 可保持不变）。
+
+最后一行固定格式，仅此一行：`done:e2e-a`（若失败则输出 `done:ERROR`）。前面可有一句中文简述。不要用 markdown 围栏。
+

@@ -1,0 +1,4 @@
+不要 sessions_spawn。
+
+用户已给出可解析路径（相对工作区）：OpenLum.Core/Tools/ReadTool.cs
+任务：只读该文件前 25 行并概括 read 工具的职责（一句中文）。不要 list_dir 其父目录。

@@ -1,0 +1,5 @@
+不要 sessions_spawn。
+
+E2E：验证 workflow 下仍可先 submit_plan 再 exec（写计划闸门）。先 submit_plan，content 一行：E2E 执行 dotnet --version。然后 exec：dotnet --version（PowerShell 一条）。最后一句中文报告版本号主版本。
+
+说明：allowExecInObserve 为 true 时，仅跑命令也可不经 submit_plan 直接 exec；本脚本刻意保留计划一步以回归 submit_plan。

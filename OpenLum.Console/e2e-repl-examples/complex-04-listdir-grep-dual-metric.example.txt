@@ -1,0 +1,14 @@
+不要 sessions_spawn。
+
+
+
+1) **list_dir**：path=`OpenLum.Core/Tools`，recursive=false，name_glob=`*Tool.cs`（单层表格式即可）。
+   计数 M：**仅**文件名以 `Tool.cs` 结尾的条目（如 `GrepTool.cs`）；`ToolRegistry.cs`、`PlanStore.cs`、`TodoStore.cs` 等不要计入。
+
+2) **grep**：path=`OpenLum.Tests`，glob=`*.cs`，pattern=`\[Fact\]`，output_mode=`files_with_matches`。
+
+
+
+最后一行只输出两个阿拉伯数字，英文逗号分隔，无空格：`M,N`。M=按上规则；N=第 2 步至少命中一次的文件个数。
+
+

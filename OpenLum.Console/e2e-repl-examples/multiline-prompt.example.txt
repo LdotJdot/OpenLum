@@ -1,0 +1,7 @@
+不要 sessions_spawn。不要调用 read/grep/glob 等工具。
+
+仅根据「本段用户消息」本身回答两个问题（各一句话）：
+1) 本段里以「-」开头的 Markdown 列表项有几条？
+2) 若 OpenLum 工具 grep、glob 的控制台状态行分别以英文动词开头，按你掌握的典型命名，各是什么？
+
+（整文件单条消息测试：与 --repl-file-entire 配合；多行不应被拆成多轮 REPL。）

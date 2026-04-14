@@ -3,7 +3,7 @@
 > **文档类型**：架构与路线图（设计定稿；实现过程中请同步更新「实施任务清单」与本文相关段落）。  
 > **仓库路径**：`docs/AGENT_EFFICIENCY_ROADMAP.md`  
 > **整理日期**：2026-04-09  
-> **概要**：在保留 Skill 扩展的前提下，对齐 Cursor 类一等工具面（read / write / str_replace / grep / glob / semantic_search）；PDF/Word/Excel 等仍走 Skill + exec；宿主统一路径解析、并行与阶段可插拔；把高效用法沉淀为短规则与工具契约，而非写死长提示词。
+> **概要**：在保留 Skill 扩展的前提下，对齐 Cursor 类一等工具面（read / write / str_replace / grep / glob；不含启发式 semantic_search）；PDF/Word/Excel 等仍走 Skill + exec；宿主统一路径解析、并行与阶段可插拔；把高效用法沉淀为短规则与工具契约，而非写死长提示词。
 
 ## 实施任务清单（完成后请勾选）
 
@@ -11,7 +11,7 @@
 - [x] **path-contract-unified** — `WorkspacePathResolver`（`OpenLum.Console/IO/`）、Read/Write/ListDir/grep/glob/str_replace 同源校验、可教错误信息  
 - [x] **strreplace-tool** — `str_replace` ITool（`StrReplaceTool.cs`）  
 - [x] **native-grep-glob** — `GrepTool.cs`（纯 .NET regex）、`GlobTool.cs`、`group:search` in `ToolProfiles`  
-- [ ] **semantic-search** — 按 v0/v1 分档落地（待后续迭代）  
+- [ ] **semantic-search-v1** — 可选：离线索引或嵌入检索（**不**再使用已移除的 v0 启发式工具）  
 - [x] **parallel-tool-exec** — AgentLoop 并行策略（ReadLike 并行 / WriteLike 串行）  
 - [ ] **batch-read** — 多路径或 `read_many`、token 上限（read 已增加 offset 参数，多路径待后续）  
 - [ ] **skill-frontmatter** — `summary_usage` / `delegates_to_tool`（待后续迭代）  
@@ -178,7 +178,7 @@ flowchart LR
 
 ## 工具对照：本对话助手 vs OpenLum（避免概念混淆）
 
-- **本环境（Cursor 里的我）**：文件读写主要用 **专用工具** `Read`、`Write`、`StrReplace`（以及 `Grep`、`Glob`、`SemanticSearch` 等），**不是**通过通用 shell 里 `Get-Content`/`echo` 完成；需要跑构建、脚本时才用 **终端类工具**（如 `Shell`）。
+- **本环境（Cursor 里的我）**：文件读写主要用 **专用工具** `Read`、`Write`、`StrReplace`（以及 `Grep`、`Glob`、代码库搜索等），**不是**通过通用 shell 里 `Get-Content`/`echo` 完成；需要跑构建、脚本时才用 **终端类工具**（如 `Shell`）。
 - **OpenLum.Console**：对应能力是 `**read` / `write` 这两个 `ITool`**（见 `[Application.cs](OpenLum.Console/Application.cs)` 注册），语义上接近「受路径约束的读写 API」；通用命令行是 `**exec`（PowerShell）**。因此：**不是「shell 命令叫 read/write」**，而是 **宿主实现的工具名与 shell 动词碰巧相似**。
 
 将上述对照写入计划，是为了后续设计「原生 grep」时明确：**grep 也应是独立 `ITool`，而不是教模型用 exec 调 rg**——与 Cursor 侧「Grep 工具优先于自己拼 shell」一致。
@@ -192,7 +192,7 @@ flowchart LR
 
 | 档位                      | 内容                                                                                                                                      | 说明                                                                                                                                         |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Tier 1 — 原生 `ITool`** | `read`（可扩展 offset/limit/多路径）、`write`、`str_replace`、`grep`、`glob`、`semantic_search`（分期）、保留 `list_dir`、`exec`、`memory_*`、`sessions_spawn` | 覆盖日常代码/文本的「搜—读—改」闭环；**不**经「先 read SKILL 再 exec」的热路径。工具名可与现有一致（`read`）或文档中并列英文别名（Read）以降低迁移成本。                                              |
+| **Tier 1 — 原生 `ITool`** | `read`（可扩展 offset/limit/多路径）、`write`、`str_replace`、`text_edit`、`grep`、`glob`、保留 `list_dir`、`exec`、`memory_*`、`sessions_spawn` | 覆盖日常代码/文本的「搜—读—改」闭环；**不**经「先 read SKILL 再 exec」的热路径。工具名可与现有一致（`read`）或文档中并列英文别名（Read）以降低迁移成本。                                              |
 | **Tier 2 — Skill**      | PDF、Word、Excel 等：沿用现有 `Skills/*/SKILL.md` + exe，经 `exec`（或未来 thin wrapper）                                                              | **特殊格式**不在 Tier1 里硬编码解析；在系统提示里写清：**遇到 `.pdf`/`.docx`/`.xlsx` 等 → 按 `<available_skills>` 选用对应 skill**（可先 `summary_usage` 或 `read` 短 SKILL）。 |
 
 
@@ -207,19 +207,17 @@ flowchart LR
 
 以下作为 **ToolDescription / 配置片段** 的可选模板，保持可扩展、可本地化：
 
-1. **检索顺序**：大文件或陌生仓库 → 先用 **glob** 缩小文件集，再用 **grep** 定位行，再 **read** 局部；有 **semantic_search** 时，「语义问题」优先语义检索再精读。
+1. **检索顺序**：大文件或陌生仓库 → 先用 **glob** 缩小文件集，再用 **grep** 定位行，再 **read** 局部。
 2. **修改策略**：小范围改动优先 **str_replace**（唯一匹配、可 `replace_all`），整文件覆盖再用 **write**；减少 diff 噪声与误覆盖。
 3. **并行**：无依赖的 **grep/read/glob** 同一轮多调用；与「并行工具执行」运行时改造一致。
 4. **Token**：`read` 带 `limit`/行范围；避免一次性读超大文件。
 5. **Skill**：仅当 Tier1 无法处理格式时再 **read SKILL.md 或 summary_usage + exec**；与现有 Exec 校验兼容。
 
-### SemanticSearch 的实现分档（避免计划悬空）
+### 未来可选：真·语义 / 索引检索（与已移除的 v0 区分）
 
-- **v0**：仅 **grep + glob**，在提示中诚实说明「无语义索引时以 grep 为主」。
-- **v1**：工作区离线索引（简单倒排 + 路径过滤，或轻量嵌入），`semantic_search` 返回文件路径 + 片段 + 分数。
-- **v2+**：增量索引、`.gitignore` 尊重、与大仓性能优化——按产品节奏迭代。
-
-具体选 v0/v1 在**执行阶段**根据工期定；计划层保留接口位（`ITool` + `group:search` 扩展名可为 `semantic_search`）。
+- **当前**：Tier1 仅 **grep + glob**（已移除易误导的 v0 `semantic_search` 启发式工具）。
+- **v1（可选后续）**：工作区离线索引（倒排 + 路径过滤，或轻量嵌入），以**新工具名**或明确版本暴露，避免与「语义」一词混淆。
+- **v2+**：增量索引、`.gitignore` 尊重、大仓性能——按产品节奏迭代。
 
 ### 与现有 todos 的对应关系
 
@@ -227,7 +225,7 @@ flowchart LR
 - `path-contract-unified`：路径解析单点、exec 与 Tier1 语义一句说清。  
 - `strreplace-tool`：`str_replace`。  
 - `native-grep-glob`：`grep` + `glob`。  
-- `semantic-search`：分档落地。  
+- `semantic-search-v1`：若做索引/嵌入，另立契约与工具名。  
 - 其余（并行、批量读、frontmatter、PromptComposer、阶段）支撑上述用法。
 
 ---

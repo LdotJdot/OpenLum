@@ -1,0 +1,3 @@
+不要 sessions_spawn。
+
+在目录 `D:\Desktop\fly报奖` 下（可递归搜索文本类文件）查找是否出现与「中国环境科学研究院」相关的表述：优先用 **grep**（pattern 自行设计，可 case_insensitive），path 指向该目录，glob 可用 `*.md` 或 `*.{md,txt}`。若命中，列出涉及文件与一两处匹配片段摘要。不要使用 exec 做 findstr/Select-String。

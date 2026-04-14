@@ -1,0 +1,4 @@
+不要 sessions_spawn。
+
+任务：分析文件夹 `OpenLum.Console/e2e-repl-examples/fixture-md-batch` 下全部 `.md` 文件各自在讲什么。
+要求：先用 **glob** 列出这些文件；接着用 **read_many**（paths 或 items）一次性读取它们，或在同一轮 assistant 里并行发出多个 **read**（不要多轮里一个一个读）。最后一段中文汇总（每个文件一行要点）。
