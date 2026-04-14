@@ -3,6 +3,7 @@ using OpenLum.Console.Agent;
 using OpenLum.Console.Compaction;
 using OpenLum.Console.Config;
 using OpenLum.Console.Console;
+using OpenLum.Console.Hosting;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.IO;
 using OpenLum.Console.Observability;
@@ -20,20 +21,20 @@ public sealed class Application
     /// <summary>Set for each main REPL <see cref="RunAsync"/> so <see cref="AgentLoop"/> can flush streamed text before tool lines.</summary>
     private static ThinkAwareConsoleProgress? s_currentReplAssistantProgress;
 
-    public static int Run(string[]? args = null)
-    {
-        // Piped REPL input (e.g. PowerShell | dotnet run) is UTF-8; default console code page can mangle CJK in logs.
-        try
-        {
-            System.Console.InputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-            System.Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        }
-        catch
-        {
-            // Non-console hosts
-        }
 
+    /// <summary>
+    /// Backward compatibility shim. Host should initialize console encoding before calling <see cref="Run"/>.
+    /// </summary>
+    public static void EnsureConsoleUtf8Initialized()
+    {
+        // Intentionally no-op in Core to preserve dependency direction:
+        // Core depends on input abstractions only; host owns concrete console initialization.
+    }
+
+    public static int Run(string[]? args, IReplLineInput replLineInput)
+    {
         var argv = args ?? Array.Empty<string>();
+        var lineInput = replLineInput ?? throw new ArgumentNullException(nameof(replLineInput));
         if (argv.Length > 0 && argv.Contains("--config-doctor", StringComparer.OrdinalIgnoreCase))
         {
             return RunConfigDoctor();
@@ -320,16 +321,16 @@ public sealed class Application
 
                     System.Console.WriteLine($"[OpenLum] Single user message from entire file: {abs}");
                     System.Console.WriteLine();
-                    RunReplUserQuery(agent, workspaceDir, config.UserTimezone, entire, System.Console.ReadLine,
+                    RunReplUserQuery(agent, workspaceDir, config.UserTimezone, entire, lineInput,
                         PersistConversation);
                     return 0;
                 }
 
                 using var replReader = new StreamReader(abs, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
                     detectEncodingFromByteOrderMarks: true);
-                var readRepl = () => replReader.ReadLine();
-                return RunRepl(agent, session, workspaceDir, config.UserTimezone, todoStore, planStore, sessionLog,
-                    readRepl, replFromFile: true, persistConversation: PersistConversation);
+                var fileLineInput = ReplLineInput.From(replReader.ReadLine);
+                return RunRepl(agent, session, workspaceDir, fileLineInput, config.UserTimezone, todoStore, planStore, sessionLog,
+                    replFromFile: true, persistConversation: PersistConversation);
             }
             finally
             {
@@ -339,8 +340,8 @@ public sealed class Application
 
         try
         {
-            return RunRepl(agent, session, workspaceDir, config.UserTimezone, todoStore, planStore, sessionLog,
-                System.Console.ReadLine, replFromFile: false, persistConversation: PersistConversation);
+            return RunRepl(agent, session, workspaceDir, lineInput, config.UserTimezone, todoStore, planStore, sessionLog,
+                replFromFile: false, persistConversation: PersistConversation);
         }
         finally
         {
@@ -354,10 +355,9 @@ public sealed class Application
         string workspaceDir,
         string? userTimezone,
         string input,
-        Func<string?>? readReplForConfirm,
+        IReplLineInput readReplForConfirm,
         Action? persistConversation = null)
     {
-        readReplForConfirm ??= System.Console.ReadLine;
         var stampedInput = TimestampInjection.Inject(input.Trim(), userTimezone);
 
         var task = new Models.ConsoleTask(
@@ -399,7 +399,7 @@ public sealed class Application
                 System.Console.ResetColor();
             }
 
-            var confirm = readReplForConfirm()?.Trim().ToLowerInvariant();
+            var confirm = readReplForConfirm.ReadLine()?.Trim().ToLowerInvariant();
             if (confirm is "y" or "yes" or "继续" or "是")
             {
                 lock (ConsoleLock)
@@ -458,15 +458,14 @@ public sealed class Application
         AgentLoop agent,
         ConsoleSession session,
         string workspaceDir,
+        IReplLineInput readRepl,
         string? userTimezone = null,
         TodoStore? todoStore = null,
         PlanStore? planStore = null,
         SessionRunLogger? sessionLog = null,
-        Func<string?>? readRepl = null,
         bool replFromFile = false,
         Action? persistConversation = null)
     {
-        readRepl ??= System.Console.ReadLine;
         while (true)
         {
             lock (ConsoleLock)
@@ -476,7 +475,7 @@ public sealed class Application
                 System.Console.ResetColor();
             }
 
-            var raw = readRepl();
+            var raw = readRepl.ReadLine();
             if (raw is null && replFromFile)
                 return 0;
             var input = raw?.Trim() ?? "";
@@ -534,9 +533,8 @@ public sealed class Application
         TodoStore? todoStore,
         PlanStore? planStore,
         SessionRunLogger? sessionLog,
-        Func<string?>? readRepl = null)
+        IReplLineInput readRepl)
     {
-        readRepl ??= System.Console.ReadLine;
         lock (ConsoleLock)
         {
             System.Console.ForegroundColor = System.ConsoleColor.Yellow;
@@ -545,7 +543,7 @@ public sealed class Application
             System.Console.ResetColor();
         }
 
-        var confirm = readRepl()?.Trim().ToLowerInvariant();
+        var confirm = readRepl.ReadLine()?.Trim().ToLowerInvariant();
         if (confirm is not ("y" or "yes" or "是"))
         {
             lock (ConsoleLock)

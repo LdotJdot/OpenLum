@@ -7,11 +7,14 @@
     <Nullable>enable</Nullable>
     <RootNamespace>OpenLum.Console</RootNamespace>
     <AssemblyName>openlum-console</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
 
     <!-- Native AOT 发布：需配合 dotnet publish -r win-x64 -->
     <PublishAot>true</PublishAot>
 
     <LangVersion>latest</LangVersion>
+    <!-- 构建 openlum-console 后默认跑 REPL 输入相关单测（含中文）；用 -p:RunReplLineInputTestsAfterBuild=false 跳过 -->
+    <RunReplLineInputTestsAfterBuild Condition="'$(RunReplLineInputTestsAfterBuild)' == ''">true</RunReplLineInputTestsAfterBuild>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,5 +31,9 @@
   <ItemGroup>
     <ProjectReference Include="..\OpenLum.Core\OpenLum.Core.csproj" />
   </ItemGroup>
+
+  <Target Name="RunReplLineInputTestsAfterBuild" AfterTargets="Build" Condition="'$(RunReplLineInputTestsAfterBuild)' == 'true'">
+    <Exec Command="dotnet test &quot;$(MSBuildThisFileDirectory)..\OpenLum.Tests\OpenLum.Tests.csproj&quot; -c $(Configuration) --filter FullyQualifiedName~ReplLineInputTests -v minimal" />
+  </Target>
 
 </Project>
