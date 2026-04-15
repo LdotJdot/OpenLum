@@ -86,6 +86,8 @@ public sealed class Application
         }
 
         var config = ConfigLoader.Load();
+        var hostRoot = HostPathResolver.ResolveHostRoot(config.HostRoot);
+        RuntimeHostPaths.HostRoot = hostRoot;
         var workspaceDir = ResolveWorkspace(config.Workspace);
         ConversationLoadResult? resumed = null;
         if (!string.IsNullOrEmpty(continuePath))
@@ -113,6 +115,10 @@ public sealed class Application
             System.Console.ResetColor();
         }
 
+        System.Console.ForegroundColor = System.ConsoleColor.DarkGray;
+        System.Console.WriteLine($"Host root: {hostRoot}");
+        System.Console.ResetColor();
+
         var apiKey = config.Model.ApiKey?.Trim();
         if (string.IsNullOrEmpty(apiKey))
             apiKey = Environment.GetEnvironmentVariable("OPENLUM_API_KEY", EnvironmentVariableTarget.User)?.Trim();
@@ -122,7 +128,7 @@ public sealed class Application
             return 1;
         }
 
-        var resolver = new WorkspacePathResolver(workspaceDir, SkillLoader.GetSkillRoots(workspaceDir));
+        var resolver = new WorkspacePathResolver(workspaceDir, SkillLoader.GetSkillRoots(hostRoot));
 
         var todoStore = new TodoStore();
         var planStore = new PlanStore();
@@ -197,7 +203,7 @@ public sealed class Application
         );
 
         IToolRegistry toolsFiltered = new ToolPolicyFilter(baseTools, config.ToolPolicy);
-        var subagentPrompt = ComposeSystemPrompt(workspaceDir, toolsFiltered, config.PromptOverlay);
+        var subagentPrompt = ComposeSystemPrompt(workspaceDir, hostRoot, toolsFiltered, config.PromptOverlay);
         SessionCompactor? compactor = null;
         if (config.Compaction.Enabled)
         {
@@ -225,7 +231,7 @@ public sealed class Application
         );
 
         IToolRegistry tools = new ToolPolicyFilter(baseTools, config.ToolPolicy);
-        var systemPrompt = ComposeSystemPrompt(workspaceDir, tools, config.PromptOverlay);
+        var systemPrompt = ComposeSystemPrompt(workspaceDir, hostRoot, tools, config.PromptOverlay);
 
         var modelLabel = $"{config.Model.Provider}/{config.Model.Model}";
         void PersistConversation()
@@ -440,10 +446,13 @@ public sealed class Application
         System.Console.WriteLine("== OpenLum Config Doctor ==");
         var config = ConfigLoader.Load();
         System.Console.WriteLine($"Profile   : {config.ToolPolicy.Profile}");
-        System.Console.WriteLine($"Workspace : {ResolveWorkspace(config.Workspace)}");
+        var wr = ResolveWorkspace(config.Workspace);
+        var hr = HostPathResolver.ResolveHostRoot(config.HostRoot);
+        System.Console.WriteLine($"Workspace : {wr}");
+        System.Console.WriteLine($"Host root : {hr}");
         System.Console.WriteLine($"Model     : provider={config.Model.Provider}, model={config.Model.Model}, baseUrl={config.Model.BaseUrl ?? "(default)"}");
 
-        var skills = SkillLoader.Load(ResolveWorkspace(config.Workspace ?? "."));
+        var skills = SkillLoader.Load(hr);
         System.Console.WriteLine();
         System.Console.WriteLine($"Skills ({skills.Count}):");
         foreach (var s in skills)
@@ -568,9 +577,9 @@ public sealed class Application
     }
 
     /// <summary>Built-in system prompt plus optional <see cref="AppConfig.PromptOverlay"/> (product/deployment hints).</summary>
-    private static string ComposeSystemPrompt(string workspaceDir, IToolRegistry tools, string? promptOverlay)
+    private static string ComposeSystemPrompt(string workspaceDir, string hostRoot, IToolRegistry tools, string? promptOverlay)
     {
-        var s = SystemPromptBuilder.Build(workspaceDir, tools);
+        var s = SystemPromptBuilder.Build(workspaceDir, hostRoot, tools);
         var o = promptOverlay?.Trim();
         if (string.IsNullOrEmpty(o))
             return s;

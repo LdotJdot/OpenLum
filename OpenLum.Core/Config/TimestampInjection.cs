@@ -16,7 +16,7 @@ public static class TimestampInjection
     /// Prepends a compact timestamp envelope if the message doesn't already have one.
     /// </summary>
     /// <param name="message">User message.</param>
-    /// <param name="timeZoneId">IANA or Windows timezone ID (e.g. Asia/Shanghai). Null = local.</param>
+    /// <param name="timeZoneId">IANA or Windows timezone ID. Null = local.</param>
     /// <param name="now">Override for testing. Null = DateTime.Now.</param>
     /// <returns>Message with timestamp prefix when applicable.</returns>
     public static string Inject(string message, string? timeZoneId = null, DateTime? now = null)

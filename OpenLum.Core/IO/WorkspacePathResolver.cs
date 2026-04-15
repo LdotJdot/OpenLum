@@ -22,7 +22,7 @@ public readonly record struct PathResolution
 ///   - Absolute paths (including ~ expansion) are accepted as-is.
 ///   - No whitelist restriction: the agent runs with user permissions on
 ///     the user's machine, not in a sandbox. When the user provides an
-///     explicit absolute path (e.g. "D:\Desktop\fly报奖\总结.md"), that is
+///     explicit absolute path to a user file, that is
 ///     a clear instruction and must be honored without round-tripping.
 /// </summary>
 public sealed class WorkspacePathResolver

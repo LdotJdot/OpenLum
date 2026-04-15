@@ -19,12 +19,12 @@ public sealed class ReadManyTool : ITool
     public string Name => "read_many";
 
     public string Description =>
-        "Read multiple plain-text files in one call. Output is per-file blocks—do not assume the same lines match across different files. " +
-        "For **folder-wide Markdown/text review**, after **glob** lists `*.md` paths, use **read_many** with those paths (same assistant turn as **glob** when possible) instead of serial single-file **read** across many turns. " +
+        "Read multiple **plain-text** files in one call (line windows; no extractor pipeline). Output is per-file blocks—do not assume the same lines match across different files. " +
+        "For **folder-wide Markdown/text review**, after **glob** lists paths, use **read_many** in the same turn when possible instead of many serial **read** calls. " +
+        "PDF/Office/CAD and similar types are handled by the single-file **read** tool (host extractors, often subprocess-based). This batch tool does not invoke those extractors yet—so use **read** per file for those extensions today (parallel batching could be added later without changing that fact). " +
         "Provide items=[{path, offset?, limit?}] or paths=[...]. " +
         "If the call errors, fix paths/JSON and retry once—do not fall back to reading every file in a tree unless the user asked for that. " +
-        "Per file, **offset** and **limit** are numbers; continuation is **next_offset = offset + limit** (e.g. 1 + 200 → 201, not 2000). " +
-        "Plain-text only; for other formats or extraction, use whichever single-file path tool in the registry covers those formats (not this batch tool). " +
+        "Per file, **offset** and **limit** are numbers; next window starts at **offset + limit** (no overlap). " +
         "Each file returns numbered lines in this tool's standard format.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
@@ -33,12 +33,16 @@ public sealed class ReadManyTool : ITool
         new ToolParameter("paths", "array", "Array of file paths (uses shared offset/limit).", false),
         new ToolParameter("offset", "number", "Numeric window start for all paths (default 1). Next chunk: offset + limit. Negative: count from end.", false),
         new ToolParameter("limit", "number", "Numeric window size per file (default 200, max 2000). Next chunk: offset + limit.", false),
-        new ToolParameter("max_total_lines", "number", "Max total lines across all files (default 4000, max 20000).", false)
+        new ToolParameter("max_total_lines", "number", "Max total lines across all files (default 4000, max 20000).", false),
+        new ToolParameter("max_bytes_per_file", "number", "Skip files larger than this many bytes (default 5242880 = 5MB; aligns with read tool safety).", false)
     ];
+
+    private const long DefaultMaxBytesPerFile = 5 * 1024 * 1024;
 
     public Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
     {
         var maxTotalLines = ParseInt(args, "max_total_lines", 4000, 1, 20000, zeroMeansDefault: true);
+        var maxBytesPerFile = (long)ParseInt(args, "max_bytes_per_file", (int)DefaultMaxBytesPerFile, 1, int.MaxValue, zeroMeansDefault: true);
         var defaultLimit = ParseInt(args, "limit", 200, 1, 2000, zeroMeansDefault: true);
         var defaultOffset = ParseInt(args, "offset", 1);
 
@@ -69,15 +73,31 @@ public sealed class ReadManyTool : ITool
                 continue;
             }
 
+            var full = res.FullPath!;
+            try
+            {
+                var len = new FileInfo(full).Length;
+                if (len > maxBytesPerFile)
+                {
+                    sb.AppendLine(
+                        $"Skipped: file too large ({len} bytes > max_bytes_per_file={maxBytesPerFile}). Use grep/read with offset/limit on this path, or raise max_bytes_per_file.");
+                    continue;
+                }
+            }
+            catch
+            {
+                // proceed; ReadAllLines may still work
+            }
+
             string[] lines;
             try
             {
-                lines = File.ReadAllLines(res.FullPath!);
+                lines = File.ReadAllLines(full);
             }
             catch (Exception ex)
             {
                 sb.AppendLine(
-                    $"Error reading file: {ex.Message}. For Office/PDF/CAD, use exec with the corresponding skill exe.");
+                    $"Error reading file: {ex.Message}. Extracted/binary formats need the **read** tool; **read_many** only reads plain text here (no bundled extractors in this path).");
                 continue;
             }
 

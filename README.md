@@ -39,7 +39,7 @@
 
 ### Browser automation
 
-Browser actions (open, snapshot, click, type, screenshot, etc.) are provided by the **agent-browser** skill: the agent uses the `exec` tool to run the [agent-browser](https://agent-browser.dev/commands) CLI. Install it locally (e.g. `npm i -g @agent-browser/cli` or per-project) and ensure `agent-browser` is on PATH. The old **OpenLum.Browser** (Playwright) is no longer used by the console; it remains in the repo as an optional/legacy component.
+Browser actions (open, snapshot, click, type, screenshot, etc.) are provided by the **agent-browser** skill: the agent uses the `exec` tool to run the [agent-browser](https://agent-browser.dev/commands) CLI. Install it locally (`npm` global or per-project) and ensure `agent-browser` is on PATH. The old **OpenLum.Browser** (Playwright) is no longer used by the console; it remains in the repo as an optional/legacy component.
 
 ### Skill execution extension
 
@@ -47,7 +47,7 @@ Skills extend the agent without new C# tools:
 
 1. **Discovery** — The app scans for skills in:
    - `workspace/skills/*/`
-   - `AppContext.BaseDirectory/skills/*/` (e.g. `OpenLum.Console/bin/.../skills/`)
+   - `AppContext.BaseDirectory/skills/*/` (under the console build output when copied)
    - Parent directory `skills/*/`
    Each subfolder that contains a `SKILL.md` is one skill. Priority: workspace > app base > parent; same name skips lower priority.
 
@@ -55,11 +55,11 @@ Skills extend the agent without new C# tools:
    - `name:` — Skill name (default: folder name)
    - `description:` — Short description for the model
 
-3. **Prompt** — Skill list (name, description, path to `SKILL.md`) is injected into the system prompt. The model is told to use the **read** tool to load a skill’s `SKILL.md` when needed, and to use **exec** to run commands (e.g. skill dir exes or `agent-browser ...`). Never infer exe names from skill names; always read `SKILL.md` first.
+3. **Prompt** — Skill list (name, description, path to `SKILL.md`) is injected into the system prompt. The model is told to use the **read** tool to load a skill’s `SKILL.md` when needed, and to use **exec** to run commands from that documentation. Never infer exe names from skill names; always read `SKILL.md` first.
 
 4. **Execution** — The model reads `SKILL.md` for usage and paths, then runs:
-   - Bundled executables under `InternalTools/` (e.g. PDF extractors under `InternalTools/read/`), or skill-scoped exes under `Skills/`, or
-   - Shell commands (e.g. `agent-browser open --headed "https://example.com"`).
+   - Bundled executables under `InternalTools/` (including extractors under `InternalTools/read/`), or skill-scoped exes under `Skills/`, or
+   - Shell commands as documented in the skill.
 
 Adding a skill: add a folder under `OpenLum.Console/Skills/<SkillName>/` with `SKILL.md` (and optional exes). It is copied to output/publish automatically.
 
@@ -110,7 +110,7 @@ Load order: `openlum.json` → `openlum.console.json` → `appsettings.json`.
 
 | Key | Description |
 |-----|-------------|
-| `model.provider` | e.g. OpenAI, DeepSeek, Ollama |
+| `model.provider` | Provider name (OpenAI, DeepSeek, Ollama, …) |
 | `model.model` | Model id |
 | `model.baseUrl` | API base URL |
 | `model.apiKey` | API key. If empty, read from env `OPENLUM_API_KEY`. |
@@ -201,11 +201,7 @@ MIT. See [LICENSE.txt](LICENSE.txt).
 
 技能在不新增 C# 工具的前提下扩展 Agent 能力：
 
-1. **发现** — 从以下位置扫描技能：
-   - `workspace/skills/*/`
-   - `AppContext.BaseDirectory/skills/*/`（如 `OpenLum.Console/bin/.../skills/`）
-   - 父目录 `skills/*/`
-   每个包含 `SKILL.md` 的子目录视为一个技能。优先级：workspace > 程序目录 > 父目录；同名只保留高优先级。
+1. **发现** — 仅从 **宿主根目录（host root）** 下的 `skills/` 或 `Skills/` 扫描（与用户 **workspace** 分离）。宿主根目录默认与 `openlum-console` 同目录，可通过 `openlum.json` 的 `hostRoot` 或环境变量 `OPENLUM_HOST_ROOT` 指定。与 `skills` 同级应有 `InternalTools/`（内置提取器等）。源码中技能位于 `OpenLum.Core/Skills/`，构建时复制到宿主输出目录。
 
 2. **元数据** — 从每个 `SKILL.md` 解析 frontmatter：
    - `name:` — 技能名（默认取目录名）
@@ -217,7 +213,7 @@ MIT. See [LICENSE.txt](LICENSE.txt).
    - 宿主内置目录 `InternalTools/` 下的可执行文件（如 `InternalTools/read/...` 的提取器），或 `Skills/` 下的技能专用 exe，或
    - Shell 命令（如 `agent-browser open --headed "https://example.com"`）。
 
-新增技能：在 `OpenLum.Console/Skills/<技能名>/` 下放 `SKILL.md`（及可选 exe），构建/发布时会自动复制。
+新增技能：在 `OpenLum.Core/Skills/<技能名>/` 下放 `SKILL.md`（及可选 exe），随 Core 项目复制到宿主目录。
 
 ### 环境要求
 

@@ -54,7 +54,7 @@ public sealed class SessionRunLogger : IDisposable
         }
     }
 
-    /// <summary>Share the same file with a scope prefix (e.g. sub-agent).</summary>
+    /// <summary>Share the same file with a scope prefix.</summary>
     public SessionRunLogger CreateScoped(string scope)
     {
         var p = string.IsNullOrEmpty(_linePrefix) ? $"[{scope}] " : _linePrefix + $"[{scope}] ";
@@ -157,7 +157,7 @@ public sealed class SessionRunLogger : IDisposable
         WriteSection("compaction_summary", summary, maxChars: 200_000);
 
     /// <summary>
-    /// Marks a new logical session in the same log file (e.g. after user -restart).
+    /// Marks a new logical session in the same log file.
     /// </summary>
     public void WriteLogicalSessionBoundary(string reason)
     {

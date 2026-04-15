@@ -35,7 +35,7 @@ public sealed class GrepTool : ITool
         "Search file contents using regex. Returns matching lines with file paths and line numbers. " +
         "The host console may show a one-line status like \"Grepped …\" (same idea as the tool result, not extra content). " +
         "Path defaults to workspace root; absolute paths are accepted. " +
-        "Use glob to limit file types (e.g. \"*.cs\", \"*.md\"); avoid turning glob into huge path-only patterns. " +
+        "Use **glob** to narrow by file type; avoid huge path-only patterns. " +
         "Use output_mode=\"files_with_matches\" for file-list-only discovery. " +
         "Prefer this over exec/PowerShell (Get-ChildItem, Select-String) for text search. " +
         "Zero matches is a valid outcome—do not compensate with giant alternation regexes, single-character patterns, or unrelated entities. " +
@@ -45,7 +45,7 @@ public sealed class GrepTool : ITool
     [
         new ToolParameter("pattern", "string", "Regex pattern to search for.", true),
         new ToolParameter("path", "string", "Directory or file to search (default: workspace root).", false),
-        new ToolParameter("glob", "string", "File glob filter (e.g. \"*.cs\", \"*.{ts,tsx}\").", false),
+        new ToolParameter("glob", "string", "Optional file glob filter.", false),
         new ToolParameter("case_insensitive", "boolean", "Ignore case (default false).", false),
         new ToolParameter("head_limit", "number", "Max matches to return (default 50, max 200).", false),
         new ToolParameter("context_lines", "number", "Lines of context around each match (default 0, max 5).", false),
@@ -85,7 +85,9 @@ public sealed class GrepTool : ITool
         }
         catch (RegexParseException ex)
         {
-            return Task.FromResult($"Error: invalid regex: {ex.Message}");
+            return Task.FromResult(
+                $"Error: invalid regex: {ex.Message}. " +
+                "If you meant a literal dot, parenthesis, or bracket, escape regex metacharacters. For awkward fixed text, use a shorter unique substring or a minimal pattern.");
         }
 
         IEnumerable<string> files;

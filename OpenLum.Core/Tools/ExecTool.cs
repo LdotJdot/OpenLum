@@ -23,17 +23,22 @@ public sealed class ExecTool : ITool
     public string Description =>
         "Run a PowerShell command. Default working directory is the workspace. " +
         "Prefer absolute paths; workspace-relative paths are accepted. " +
-        "PowerShell only: chain with ; (not &&); use & \"path\" when paths contain spaces. Do not use cmd /c or bash-style. " +
+        "**Windows / OpenLum host: PowerShell only.** Frequent errors to avoid: (1) **Never use `&&`** to chain commands (bash habit)—PowerShell does not support it the same way; **always use `;`**: e.g. `Set-Location -LiteralPath 'D:\\...\\proj'; dotnet build` or `cd '...'; ./tool.exe`. (2) Put **cd + action in one `exec` string** with `;`, not two separate execs unless the first failed for a clear reason. " +
+        "(3) Paths with spaces: quote the path and prefer `Set-Location -LiteralPath '...'`. Do not use `cmd /c` or bash-only syntax. " +
+        "Stdout and stderr are captured **after the process exits** (not streamed live). Large output is truncated in the result. " +
+        "Programs that block on **Console.ReadKey()** or **ReadLine()** need **stdin** set: a single character for ReadKey, or a line (with newline) for ReadLine—otherwise stdin is not redirected and the process may wait until **timeoutSeconds** elapses. " +
+        "**timeoutSeconds: 0** means no automatic kill (only host cancellation); otherwise capped at 24h. Default 120s. " +
         "Under phased workflow, exec is often available before any write plan when the host allows—use it for quick commands without extra planning rounds. " +
         "Do not use exec to open or extract Word (.docx), PDF, Office, or other formats that the **read** tool handles via built-in extractors—use **read** instead. " +
         "Do not use exec to redo what grep, glob, list_dir, read, or read_many already solve (recursive listing or text search). " +
-        "Typical uses: builds/tests (dotnet, npm), or running a skill exe after reading that skill's SKILL.md. " +
+        "Typical uses: builds, tests, installs, and other commands the host profile allows. " +
         "After native search tools report no matches on the user's scope, stop and answer—do not spawn long shell search loops.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
-        new ToolParameter("command", "string", "PowerShell command. Use ; to chain (never &&). Example: cd \"path\"; dotnet build", true),
-        new ToolParameter("timeoutSeconds", "number", "Timeout in seconds (default 120; openlum-browser commands use at least 180)", false),
-        new ToolParameter("stdin", "string", "Input to send to process stdin (for Console.ReadLine/ReadKey). Each line for ReadLine; single chars for ReadKey. Example: \"hello\\n\" or \"y\\n\" for prompts.", false)
+        new ToolParameter("command", "string",
+            "Single PowerShell script line or chained script: use **semicolon `;`** between statements. **Do not use `&&`** (wrong for this host). Example: `Set-Location -LiteralPath 'C:\\path with spaces\\app'; dotnet run`.", true),
+        new ToolParameter("timeoutSeconds", "number", "Seconds before the process is killed (default 120). Use 0 for no auto-timeout (still cancellable). Max 86400. openlum-browser uses at least 180 when applicable.", false),
+        new ToolParameter("stdin", "string", "Sent to the child stdin when the program reads from Console (ReadLine/ReadKey). Required when the program waits for input. After writing, stdin is closed (EOF).", false)
     ];
 
     public async Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
@@ -42,6 +47,8 @@ public sealed class ExecTool : ITool
         if (string.IsNullOrWhiteSpace(command))
             return "Error: command is required.";
 
+        const int maxTimeoutSec = 86400; // 24h cap for explicit finite timeouts
+        var useInfiniteTimeout = false;
         var timeoutSec = _defaultTimeoutSeconds;
         if (args.TryGetValue("timeoutSeconds", out var v))
         {
@@ -50,13 +57,16 @@ public sealed class ExecTool : ITool
                 System.Text.Json.JsonElement je when je.TryGetInt32(out var i) => i,
                 long l => (int)l,
                 int i => i,
-                _ => 0
+                _ => -1
             };
-            if (n > 0) timeoutSec = Math.Min(n, 600);
+            if (n == 0)
+                useInfiniteTimeout = true;
+            else if (n > 0)
+                timeoutSec = Math.Min(n, maxTimeoutSec);
         }
 
         // openlum-browser: first run may start --master, wait for socket, navigate (Playwright). 60s is often too short.
-        if (command.IndexOf("openlum-browser", StringComparison.OrdinalIgnoreCase) >= 0)
+        if (!useInfiniteTimeout && command.IndexOf("openlum-browser", StringComparison.OrdinalIgnoreCase) >= 0)
             timeoutSec = Math.Max(timeoutSec, 180);
 
         var stdinContent = args.GetValueOrDefault("stdin")?.ToString();
@@ -70,7 +80,7 @@ public sealed class ExecTool : ITool
         {
             var skillDir = Path.GetDirectoryName(exePath) ?? "";
             var suggestedRead = skillDir.IndexOf("skills", StringComparison.OrdinalIgnoreCase) >= 0
-                ? " 请先 read 该 skill 的 SKILL.md 确认正确的 exe 路径和文件名，切勿根据 skill 名称猜测 exe 名。"
+                ? " 请确认该路径是否存在，或查阅随包/宿主文档中的可执行文件位置与名称。"
                 : skillDir.IndexOf("InternalTools", StringComparison.OrdinalIgnoreCase) >= 0
                     ? " 请确认该 exe 已放入 InternalTools/ 并重新构建/发布。"
                     : "";
@@ -85,7 +95,8 @@ public sealed class ExecTool : ITool
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = !string.IsNullOrEmpty(stdinContent),
+            // If the program calls Console.ReadKey/ReadLine without redirected stdin, it can block until timeout.
+            RedirectStandardInput = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
@@ -97,26 +108,44 @@ public sealed class ExecTool : ITool
                 return "Error: failed to start process.";
 
             if (!string.IsNullOrEmpty(stdinContent))
-            {
                 await process.StandardInput.WriteAsync(stdinContent);
-                process.StandardInput.Close();
-            }
+            process.StandardInput.Close();
 
-            var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+            // Reads complete when the process ends or streams close (do not tie to the same cancel as wait — avoids losing output on timeout).
+            var outTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+            var errTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 
-            var outTask = process.StandardOutput.ReadToEndAsync(cts.Token);
-            var errTask = process.StandardError.ReadToEndAsync(cts.Token);
-
-            var completed = await Task.WhenAny(
-                process.WaitForExitAsync(cts.Token),
-                Task.Delay(TimeSpan.FromSeconds(timeoutSec + 1), cts.Token)
-            );
-
-            if (!process.HasExited)
+            if (useInfiniteTimeout)
             {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                return "Error: command timed out.";
+                await process.WaitForExitAsync(ct);
+            }
+            else
+            {
+                var exitTask = process.WaitForExitAsync(ct);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(timeoutSec), ct);
+                var winner = await Task.WhenAny(exitTask, timeoutTask);
+                if (!ReferenceEquals(winner, exitTask) || !process.HasExited)
+                {
+                    if (!process.HasExited)
+                    {
+                        try { process.Kill(entireProcessTree: true); } catch { }
+                    }
+
+                    try
+                    {
+                        await exitTask;
+                    }
+                    catch
+                    {
+                        /* killed or cancelled */
+                    }
+
+                    var stdoutPartial = await SafeReadEnd(outTask);
+                    var stderrPartial = await SafeReadEnd(errTask);
+                    var hint =
+                        " If the program was waiting for input, pass **stdin** (short string for ReadKey, line with newline for ReadLine). stdin is closed after send (EOF if empty). Or set **timeoutSeconds: 0** to wait without auto-kill.";
+                    return $"Error: command timed out after {timeoutSec}s.{hint}\n--- stdout (partial) ---\n{stdoutPartial}\n--- stderr (partial) ---\n{stderrPartial}";
+                }
             }
 
             var stdout = await outTask;
@@ -143,10 +172,12 @@ public sealed class ExecTool : ITool
 
             if (process.ExitCode != 0)
             {
+                var cwdHint = $"[cwd: {workingDir}] ";
                 if (string.IsNullOrWhiteSpace(result))
-                    return $"Error: exit code {process.ExitCode} (no output captured).";
+                    return $"{cwdHint}Error: exit code {process.ExitCode} (no output captured).";
                 if (!result.TrimStart().StartsWith("Error:", StringComparison.OrdinalIgnoreCase))
-                    return $"Error: exit code {process.ExitCode}. {result}";
+                    return $"{cwdHint}Error: exit code {process.ExitCode}. {result}";
+                return $"{cwdHint}{result}";
             }
 
             return string.IsNullOrEmpty(result) ? $"(exit code {process.ExitCode})" : result;
@@ -158,6 +189,18 @@ public sealed class ExecTool : ITool
         catch (Exception ex)
         {
             return $"Error: {ex.Message}";
+        }
+    }
+
+    private static async Task<string> SafeReadEnd(Task<string> task)
+    {
+        try
+        {
+            return await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            return "(stream unavailable)";
         }
     }
 
@@ -215,7 +258,7 @@ public sealed class ExecTool : ITool
 
     /// <summary>
     /// If the command invokes an exe under a skills directory, returns that exe's directory
-    /// so native DLLs (e.g. pdfium) can be loaded. Otherwise returns false.
+    /// so native DLLs beside the exe can load. Otherwise returns false.
     /// </summary>
     private bool TryResolveSkillExeWorkingDir(string command, out string exeDir)
     {

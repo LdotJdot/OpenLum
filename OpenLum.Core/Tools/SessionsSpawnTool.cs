@@ -5,6 +5,8 @@ using OpenLum.Console.Console;
 using OpenLum.Console.Interfaces;
 using OpenLum.Console.Observability;
 using OpenLum.Console.Session;
+using System.Text;
+using System.Text.Json;
 
 namespace OpenLum.Console.Tools;
 
@@ -52,9 +54,8 @@ public sealed class SessionsSpawnTool : ITool
         _model = model;
         _parentTools = parentTools;
         _workspaceDir = workspaceDir;
-        // Same base prompt as parent (Workspace, Skills, date, style); Tools section has no sessions_spawn.
-        // Append sub-agent reminder so it uses skills (e.g. agent-browser for 联网搜索) the same way as parent.
-        _systemPrompt = systemPrompt.TrimEnd() + "\n\n[Sub-agent: You have the same workspace, tools, and skills as the parent. You must use them the same way: when the task requires web search, browsing, or online information (联网搜索/浏览网页), use the read tool to load the relevant skill (e.g. agent-browser, search) from <available_skills> above, then use exec as described in that skill. Do not say you cannot do web search—you can, via skills and exec.]";
+        // Same base prompt as parent; Tools section has no sessions_spawn.
+        _systemPrompt = systemPrompt.TrimEnd() + "\n\n[Sub-agent: You share the parent's workspace and the same system prompt (including **Skills** and **Tools**). Apply it the same way as the parent session.]";
         _maxDepth = maxDepth;
         _compactor = compactor;
         _maxToolTurns = Math.Max(1, maxToolTurns);
@@ -70,20 +71,100 @@ public sealed class SessionsSpawnTool : ITool
     public string Description =>
         "Spawn a sub-agent for an isolated or long multi-step task; it uses the same workspace and tools as you. " +
         "Do not use this for work you can do with read/list_dir/grep/glob here—call those directly. " +
-        "Returns the sub-agent's final reply; do not spawn again for the same delegated work.";
+        "Returns the sub-agent's final reply; do not spawn again for the same delegated work. " +
+        "You may pass a single **task** string, or a **tasks** array to run multiple sub-agents in parallel and get a combined result. " +
+        "Use parallel tasks when you need to search/read/compare multiple files or areas at once. " +
+        "Safety: avoid having multiple sub-agents edit the **same file** concurrently; prefer sub-agents to gather evidence and propose edits, then apply edits deterministically in the parent (or partition by file). " +
+        "Delegation rule: sub-agent tasks should be **short and outcome-based** (goal + scope + required output). Avoid giving sub-agents long step-by-step shell scripts unless the user asked for exact commands. " +
+        "Template: \"Goal: <what>. Scope: <paths/constraints>. Output: <bullets/table/files+line numbers>.\"";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("task", "string", "The task for the sub-agent to complete", true),
-        new ToolParameter("label", "string", "Optional label for the sub-agent run", false)
+        new ToolParameter("label", "string", "Optional label for the sub-agent run", false),
+        new ToolParameter("tasks", "array", "Optional array of { task, label? }. If provided, runs them in parallel and returns combined results.", false)
     ];
 
     public async Task<string> ExecuteAsync(IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
     {
+        if (TryParseTasks(args, out var tasks, out var parseErr))
+        {
+            if (tasks.Count == 0)
+                return "Error: tasks is empty.";
+            return await RunManyAsync(tasks, ct);
+        }
+        if (!string.IsNullOrWhiteSpace(parseErr))
+            return parseErr!;
+
         var task = args.GetValueOrDefault("task")?.ToString();
         if (string.IsNullOrWhiteSpace(task))
-            return "Error: task is required.";
+            return "Error: task is required (or pass tasks array).";
 
         var label = args.GetValueOrDefault("label")?.ToString();
+        var reply = await RunSingleAsync(new SpawnTask(task, label), ct);
+        // 在返回内容前加一行明确标识，便于主 agent 识别“子 agent 已完成并携带以下结果”
+        return $"[子agent已结束，以下为子agent的最终回复]\n\n{reply}";
+    }
+
+    private async Task<string> RunManyAsync(IReadOnlyList<SpawnTask> tasks, CancellationToken ct)
+    {
+        var runtime = tasks.Select((t, idx) => new SpawnRuntime(idx, t)).ToArray();
+
+        lock (ConsoleLock)
+        {
+            System.Console.WriteLine();
+            System.Console.WriteLine($"[sessions_spawn] 并行启动 {runtime.Length} 个子agent…（将以新增行方式持续刷新状态）");
+            WriteStatusSnapshot(runtime, "已创建任务");
+        }
+
+        var runs = new Task<(SpawnTask Task, string Reply, bool Ok)>[tasks.Count];
+        for (var i = 0; i < tasks.Count; i++)
+        {
+            var rt = runtime[i];
+            runs[i] = Task.Run(async () =>
+            {
+                MarkStatus(runtime, rt.Index, SpawnState.Running, "执行中…");
+                try
+                {
+                    var reply = await RunSingleAsync(rt.Task, ct, bufferedOutput: true);
+                    MarkStatus(runtime, rt.Index, SpawnState.Completed, "已完成");
+                    return (rt.Task, reply, true);
+                }
+                catch (OperationCanceledException)
+                {
+                    MarkStatus(runtime, rt.Index, SpawnState.Cancelled, "已取消");
+                    return (rt.Task, "Sub-agent cancelled.", false);
+                }
+                catch (Exception ex)
+                {
+                    MarkStatus(runtime, rt.Index, SpawnState.Failed, "失败");
+                    return (rt.Task, $"Sub-agent failed: {ex.Message}", false);
+                }
+            }, ct);
+        }
+
+        var done = await Task.WhenAll(runs);
+        var sb = new StringBuilder();
+        sb.AppendLine("[子agent批量并行已结束，以下为各子agent最终回复]");
+        sb.AppendLine();
+        for (var i = 0; i < done.Length; i++)
+        {
+            var (st, reply, ok) = done[i];
+            var label = string.IsNullOrWhiteSpace(st.Label) ? $"#{i + 1}" : st.Label!;
+            sb.AppendLine($"--- [{label}] --- {(ok ? "(OK)" : "(ERROR)")}");
+            sb.AppendLine(reply);
+            sb.AppendLine();
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private async Task<string> RunSingleAsync(SpawnTask req, CancellationToken ct)
+        => await RunSingleAsync(req, ct, bufferedOutput: false);
+
+    private async Task<string> RunSingleAsync(SpawnTask req, CancellationToken ct, bool bufferedOutput)
+    {
+        var task = req.Task;
+        var label = req.Label;
         var subagentLabel = string.IsNullOrWhiteSpace(label) ? "sub-agent" : $"sub-agent:{label}";
 
         // Isolated plan/todo stores + same workflow as parent so Observe→Act promotion matches submit_plan/todo tool effects.
@@ -140,11 +221,12 @@ public sealed class SessionsSpawnTool : ITool
         subLog?.WriteLine($"sessions_spawn task: {task}");
 
         var startedStreaming = false;
+        var buffered = bufferedOutput ? new BufferedConsoleProgress(ConsoleLock) : null;
         var progress = new Progress<string>(chunk =>
         {
             lock (ConsoleLock)
             {
-                if (!startedStreaming)
+                if (!startedStreaming && !string.IsNullOrEmpty(chunk))
                 {
                     startedStreaming = true;
                     System.Console.WriteLine();
@@ -153,13 +235,29 @@ public sealed class SessionsSpawnTool : ITool
                     System.Console.Write($"[{subagentLabel}] ");
                     System.Console.ForegroundColor = prev;
                 }
-                thinkProgress.Report(chunk);
+
+                if (buffered is null)
+                {
+                    thinkProgress.Report(chunk);
+                    return;
+                }
+
+                // In parallel mode, buffer to reduce A/B interleaving.
+                // Flush on newline or minimum chunk size, but still keep the stream feel.
+                foreach (var part in buffered.SplitAndBuffer(chunk))
+                    thinkProgress.Report(part);
             }
         });
 
         var result = await subAgent.RunAsync(task, progress, ct);
         lock (ConsoleLock)
         {
+            if (buffered is not null)
+            {
+                var tail = buffered.FlushAll();
+                if (!string.IsNullOrEmpty(tail))
+                    thinkProgress.Report(tail);
+            }
             thinkProgress.FlushRemaining();
         }
         if (startedStreaming)
@@ -193,9 +291,189 @@ public sealed class SessionsSpawnTool : ITool
         var lastAssistant = subSession.Messages
             .Where(m => m.Role == Models.MessageRole.Assistant)
             .LastOrDefault();
-        var reply = lastAssistant?.Content ?? "(no reply)";
-        // 在返回内容前加一行明确标识，便于主 agent 识别“子 agent 已完成并携带以下结果”
-        return $"[子agent已结束，以下为子agent的最终回复]\n\n{reply}";
+        return lastAssistant?.Content ?? "(no reply)";
+    }
+
+    private sealed record SpawnTask(string Task, string? Label);
+
+    /// <summary>
+    /// Buffers streamed chunks and yields flushable parts to reduce interleaving in parallel runs.
+    /// Strategy: flush whenever we see a newline, or when the buffer exceeds a threshold.
+    /// </summary>
+    private sealed class BufferedConsoleProgress
+    {
+        private readonly object _lock;
+        private readonly StringBuilder _buf = new();
+        private const int FlushThresholdChars = 600;
+
+        public BufferedConsoleProgress(object consoleLock) => _lock = consoleLock;
+
+        public IEnumerable<string> SplitAndBuffer(string chunk)
+        {
+            if (string.IsNullOrEmpty(chunk))
+                yield break;
+
+            // Caller already holds ConsoleLock; keep internal invariants anyway.
+            lock (_lock)
+            {
+                _buf.Append(chunk);
+
+                while (true)
+                {
+                    var idx = IndexOfNewline(_buf);
+                    if (idx >= 0)
+                    {
+                        var take = idx + 1;
+                        yield return _buf.ToString(0, take);
+                        _buf.Remove(0, take);
+                        continue;
+                    }
+
+                    if (_buf.Length >= FlushThresholdChars)
+                    {
+                        yield return _buf.ToString();
+                        _buf.Clear();
+                    }
+                    break;
+                }
+            }
+        }
+
+        public string FlushAll()
+        {
+            lock (_lock)
+            {
+                if (_buf.Length == 0) return "";
+                var s = _buf.ToString();
+                _buf.Clear();
+                return s;
+            }
+        }
+
+        private static int IndexOfNewline(StringBuilder sb)
+        {
+            for (var i = 0; i < sb.Length; i++)
+            {
+                if (sb[i] == '\n')
+                    return i;
+            }
+            return -1;
+        }
+    }
+
+    private enum SpawnState
+    {
+        Pending,
+        Running,
+        Completed,
+        Failed,
+        Cancelled
+    }
+
+    private sealed class SpawnRuntime
+    {
+        public int Index { get; }
+        public SpawnTask Task { get; }
+        public SpawnState State { get; set; } = SpawnState.Pending;
+        public string Note { get; set; } = "等待中";
+        public DateTimeOffset StartedAt { get; set; }
+        public DateTimeOffset? EndedAt { get; set; }
+
+        public SpawnRuntime(int index, SpawnTask task)
+        {
+            Index = index;
+            Task = task;
+        }
+    }
+
+    private static void MarkStatus(SpawnRuntime[] runtime, int index, SpawnState state, string note)
+    {
+        lock (ConsoleLock)
+        {
+            var rt = runtime[index];
+            if (state == SpawnState.Running && rt.State == SpawnState.Pending)
+                rt.StartedAt = DateTimeOffset.Now;
+            rt.State = state;
+            rt.Note = note;
+            if (state is SpawnState.Completed or SpawnState.Failed or SpawnState.Cancelled)
+                rt.EndedAt = DateTimeOffset.Now;
+            WriteStatusSnapshot(runtime, $"状态更新: #{index + 1} -> {StateText(state)}");
+        }
+    }
+
+    private static void WriteStatusSnapshot(SpawnRuntime[] runtime, string title)
+    {
+        System.Console.WriteLine($"[sessions_spawn] {title}");
+        for (var i = 0; i < runtime.Length; i++)
+        {
+            var rt = runtime[i];
+            var label = string.IsNullOrWhiteSpace(rt.Task.Label) ? $"#{i + 1}" : rt.Task.Label!;
+            var dur = rt.State == SpawnState.Running && rt.StartedAt != default
+                ? $" ({(DateTimeOffset.Now - rt.StartedAt).TotalSeconds:F0}s)"
+                : rt.EndedAt is { } end && rt.StartedAt != default
+                    ? $" ({(end - rt.StartedAt).TotalSeconds:F0}s)"
+                    : "";
+            System.Console.WriteLine($"  - {i + 1}. [{label}] {StateText(rt.State)}{dur} — {rt.Note}");
+        }
+        System.Console.WriteLine();
+    }
+
+    private static string StateText(SpawnState s) => s switch
+    {
+        SpawnState.Pending => "等待中",
+        SpawnState.Running => "执行中",
+        SpawnState.Completed => "已完成",
+        SpawnState.Failed => "失败",
+        SpawnState.Cancelled => "已取消",
+        _ => s.ToString()
+    };
+
+    private static bool TryParseTasks(
+        IReadOnlyDictionary<string, object?> args,
+        out List<SpawnTask> tasks,
+        out string? error)
+    {
+        tasks = new List<SpawnTask>();
+        error = null;
+
+        if (!args.TryGetValue("tasks", out var val) || val is null)
+            return false;
+
+        if (val is not JsonElement je)
+        {
+            error = "Error: tasks must be a JSON array.";
+            return false;
+        }
+
+        if (je.ValueKind == JsonValueKind.Null || je.ValueKind == JsonValueKind.Undefined)
+            return false;
+
+        if (je.ValueKind != JsonValueKind.Array)
+        {
+            error = "Error: tasks must be an array.";
+            return false;
+        }
+
+        foreach (var item in je.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                error = "Error: tasks array items must be objects { task, label? }.";
+                return false;
+            }
+
+            var task = item.TryGetProperty("task", out var tp) && tp.ValueKind == JsonValueKind.String ? tp.GetString() : null;
+            var label = item.TryGetProperty("label", out var lp) && lp.ValueKind == JsonValueKind.String ? lp.GetString() : null;
+            if (string.IsNullOrWhiteSpace(task))
+            {
+                error = "Error: each tasks[] item must include non-empty 'task' string.";
+                return false;
+            }
+
+            tasks.Add(new SpawnTask(task!, label));
+        }
+
+        return true;
     }
 
     private IToolRegistry CreateSubagentToolRegistry(TodoStore todoStore, PlanStore planStore)

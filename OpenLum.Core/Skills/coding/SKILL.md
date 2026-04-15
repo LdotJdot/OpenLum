@@ -1,17 +1,17 @@
 ---
 name: coding
-description: "Local coding workflow: read/write/list_dir/exec，加上 Grep + Glob 的纯文本搜索。Use when: editing code, building, refactoring, or exploring a codebase. Success = compile passes; user runs the program."
+description: "Local coding workflow: read/write/list_dir/exec，加上 Grep + Glob 的纯文本搜索。Use when: editing code, building, refactoring, or exploring a codebase. Success = compile passes; for C#/.NET follow csharp skill (may run tests when needed)."
 ---
 
 # Coding Skill
 
 工作区内进行通用编码工作的基础 Skill：使用 `read`、`write`、`list_dir`、`exec`，并结合 **Grep + Glob** 做代码 / 文本搜索。
 
-**铁律**：编译通过 = 完成。**禁止** exec 运行程序（如 `dotnet run`、`python xxx.py`）。用户自行运行。
+**铁律**：编译通过 = 完成。**禁止**无目的地 exec 运行程序（如 `python xxx.py`、长时间服务）。**C# / .NET** 项目不适用本条的绝对禁止：凡涉及 C#，必须遵循 **`csharp` Skill**（可在必要时按该 Skill 执行 `dotnet test` / `dotnet run`）。
 
 ## 与其他 Skill 的关系
 
-- 做 **C# / .NET** 开发与 Debug：先读取并遵守 `csharp` 的 SKILL 约定，再结合本 `coding` 与 `search` skill。
+- 做 **C# / .NET** 开发与 Debug：**必须先完整加载并遵守 `csharp` Skill**（含 TFM 识别、分版本与运行/测试策略），再结合本 `coding` 与 `search` skill。
 - 需要写 **临时 Python 脚本** 补充工具能力时：配合 `python` skill，在 `script/任务目录` 下组织脚本。
 - 只需做「查找 / 导航 / 定位代码位置」时：使用原生 **Grep** 与 **Glob**。
 - 需要**按行号或按内容做增量编辑**（ReplaceRangeWithText、ReplaceAll、InsertLines、DeleteRange 等）时：配合 `editing` skill，通过 exec 执行其提供的 PowerShell 片段。
@@ -23,7 +23,7 @@ description: "Local coding workflow: read/write/list_dir/exec，加上 Grep + Gl
 - Exploring project structure
 - Refactoring or fixing bugs
 
-Success = compile passes. Do not run the program; let the user run it.
+Success = compile passes. Non-C# stacks: do not run the app unless the user asks; C#/.NET defers to `csharp` skill.
 
 ## 四步闭环：提高编写质量与成功率
 
@@ -39,7 +39,7 @@ Success = compile passes. Do not run the program; let the user run it.
 
 - **列出改动点**：需要改/新增哪些文件、类、方法？依赖关系与调用方是否要一起改？
 - **拆分步骤**：大改动拆成小步（例如先改接口、再改实现、再改调用方），每步都可单独编译验证。
-- **选对工具**：读/写用 `read`/`write`，定位用 `Grep`/`Glob`，构建用 `exec`；涉及 C# 时先读 `csharp` skill。
+- **选对工具**：读/写用 `read`/`write`，定位用 `Grep`/`Glob`，构建用 `exec`；涉及 C# 时**必须先读 `csharp` skill** 并按其执行（含是否运行测试）。
 
 ### 3. 代码编写 — 执行
 
@@ -51,7 +51,7 @@ Success = compile passes. Do not run the program; let the user run it.
 
 - **必做编译**：修改后立即 `exec` 执行 build（如 `dotnet build -v normal`），以编译通过为完成标志。
 - **处理错误**：按编译器报错的文件与行号去读代码，结合 Grep 找引用关系，修完再 build，直到零错误。
-- **不做运行**：不执行 `dotnet run` / `python xxx.py` 等；运行与测试由用户本地完成。
+- **运行**：非 C# 项目一般不执行 `python xxx.py` 等；**C# / .NET** 按 `csharp` Skill 决定是否执行 `dotnet test` / `dotnet run`。
 
 ## Workflow
 

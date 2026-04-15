@@ -6,7 +6,7 @@
   },
   "modelx": {
     "provider": "Ollama",
-    "model": "qwen3.5:9B",
+    "model": "glm-4.7-flash",
     "baseUrl": "http://10.10.117.222:11434/v1",
     "apiKey": "xxxx",
     "noThinking": true
@@ -42,8 +42,9 @@
     "enabled": true,
     "requirePlanForWrite": true,
     "allowExecInObserve": true,
-    "requireThinkingBeforeAct": false,
-    "autoVerifyAfterFirstWrite": false
+    "autoVerifyAfterFirstWrite": false,
+    "instructionThinking": "auto",
+    "instructionThinkingMinChars": 320
   },
   "workspace": ".",
   "promptOverlay": ""

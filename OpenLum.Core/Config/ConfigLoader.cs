@@ -38,6 +38,7 @@ public static class ConfigLoader
                     Workflow = ParseWorkflow(root.TryGetProperty("workflow", out var wf) ? wf : default),
                     Search = ParseSearch(root.TryGetProperty("search", out var se) ? se : default),
                     Workspace = root.TryGetProperty("workspace", out var w) ? w.GetString()?.Trim() : null,
+                    HostRoot = root.TryGetProperty("hostRoot", out var hr) ? hr.GetString()?.Trim() : null,
                     UserTimezone = root.TryGetProperty("userTimezone", out var tz) ? tz.GetString()?.Trim() : null,
                     Conversation = ParseConversation(root.TryGetProperty("conversation", out var cv) ? cv : default),
                     PromptOverlay = root.TryGetProperty("promptOverlay", out var po) ? po.GetString()?.Trim() : null
@@ -175,9 +176,12 @@ public static class ConfigLoader
             Enabled = !el.TryGetProperty("enabled", out var e) || e.GetBoolean(),
             RequirePlanForWrite = el.TryGetProperty("requirePlanForWrite", out var rp) ? rp.GetBoolean() : true,
             AutoVerifyAfterFirstWrite = el.TryGetProperty("autoVerifyAfterFirstWrite", out var av) && av.GetBoolean(),
-            RequireThinkingBeforeAct = el.TryGetProperty("requireThinkingBeforeAct", out var th) && th.GetBoolean(),
             // Default true when key omitted: exec allowed in Observe without prior plan (see AgentLoop).
-            AllowExecInObserve = !el.TryGetProperty("allowExecInObserve", out var ax) || ax.GetBoolean()
+            AllowExecInObserve = !el.TryGetProperty("allowExecInObserve", out var ax) || ax.GetBoolean(),
+            InstructionThinking = el.TryGetProperty("instructionThinking", out var ins) ? (ins.GetString()?.Trim() ?? "auto") : "auto",
+            InstructionThinkingMinChars = el.TryGetProperty("instructionThinkingMinChars", out var im) && im.TryGetInt32(out var imc)
+                ? Math.Clamp(imc, 50, 10_000)
+                : 320
         };
     }
 
@@ -232,7 +236,13 @@ public sealed class AppConfig
     public SearchConfig Search { get; init; } = new();
     /// <summary>Workspace root path. Default: AppContext.BaseDirectory/workspace.</summary>
     public string? Workspace { get; init; }
-    /// <summary>IANA timezone for timestamp injection (e.g. Asia/Shanghai). Default: local.</summary>
+
+    /// <summary>
+    /// Host bundle directory containing <c>skills/</c> (or <c>Skills/</c>) and <c>InternalTools/</c>.
+    /// Default when unset: <see cref="AppContext.BaseDirectory"/> (exe directory). Override with env <c>OPENLUM_HOST_ROOT</c>.
+    /// </summary>
+    public string? HostRoot { get; init; }
+    /// <summary>IANA timezone ID for timestamp injection. Default: local.</summary>
     public string? UserTimezone { get; init; }
 
     /// <summary>Optional automatic .openlum conversation file.</summary>
@@ -295,7 +305,7 @@ public sealed class BrowserConfig
 {
     /// <summary>When false, browser window stays visible so you can see operations.</summary>
     public bool Headless { get; init; } = false;
-    /// <summary>Browser channel (e.g. "msedge" for Edge). Default: msedge on Windows.</summary>
+    /// <summary>Browser channel name. Default: msedge on Windows.</summary>
     public string? Channel { get; init; }
 }
 
@@ -318,8 +328,13 @@ public sealed class WorkflowConfig
     public bool AllowExecInObserve { get; init; } = true;
     /// <summary>If true, auto-switch to Verify after first write-like tool executes.</summary>
     public bool AutoVerifyAfterFirstWrite { get; init; } = false;
-    /// <summary>If true, when Observe unlocks Act, insert one ActPrep round (no tools; &lt;thinking&gt;) before Act.</summary>
-    public bool RequireThinkingBeforeAct { get; init; } = false;
+    /// <summary>
+    /// When workflow is enabled: <c>never</c> | <c>auto</c> | <c>always</c> — insert a no-tool round right after the user message
+    /// to output &lt;thinking&gt; before Observe/Act. <c>auto</c> uses heuristics (length, bullets, ambiguity keywords).
+    /// </summary>
+    public string InstructionThinking { get; init; } = "auto";
+    /// <summary>When <see cref="InstructionThinking"/> is auto: prompt length ≥ this suggests a long-form / complex request.</summary>
+    public int InstructionThinkingMinChars { get; init; } = 320;
 }
 
 /// <summary>

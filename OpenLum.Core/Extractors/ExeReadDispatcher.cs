@@ -1,13 +1,13 @@
 using System.Diagnostics;
+using OpenLum.Console.Config;
 
 namespace OpenLum.Console.Extractors;
 
 /// <summary>
-/// Runs bundled text-extraction exes under <c>InternalTools/read/</c> (relative to <see cref="AppContext.BaseDirectory"/>).
+/// Runs bundled text-extraction exes under <c>InternalTools/read/</c> (relative to <see cref="RuntimeHostPaths.HostRoot"/>).
 /// </summary>
 public static class ExeReadDispatcher
 {
-    /// <summary>Relative to <see cref="AppContext.BaseDirectory"/>.</summary>
     private const string Root = "InternalTools";
 
     private static readonly Dictionary<string, string> ExtensionToRelativeExe =
@@ -37,7 +37,7 @@ public static class ExeReadDispatcher
                 $"Supported extract extensions: {string.Join(", ", ExtensionToRelativeExe.Keys)}";
         }
 
-        var baseDir = AppContext.BaseDirectory;
+        var baseDir = RuntimeHostPaths.HostRoot;
         var exePath = Path.GetFullPath(Path.Combine(baseDir, relativeExe));
         if (!File.Exists(exePath))
         {

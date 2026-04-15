@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace OpenLum.Console.Config;
 
 /// <summary>
-/// Loads skill metadata from workspace/skills/*/SKILL.md (or Skills with capital S for case-sensitive FS).
+/// Loads skill metadata from the host bundle: <c>{hostRoot}/skills/*/SKILL.md</c> (or <c>Skills/</c>).
 /// </summary>
 public static class SkillLoader
 {
@@ -12,66 +12,49 @@ public static class SkillLoader
         new(@"^description:\s*[""']?(.+?)[""']?\s*$", RegexOptions.Multiline);
 
     /// <summary>
-    /// Enumerates skill root directories in precedence order. Tries both "skills" and "Skills"
-    /// so that repo folder "Skills" is found on case-sensitive file systems (e.g. Linux).
+    /// Returns the skills container under <paramref name="hostRoot"/> if it exists.
+    /// Tries <c>skills</c> then <c>Skills</c> for case-sensitive file systems.
     /// </summary>
-    private static IEnumerable<string> EnumerateSkillRoots(string workspaceDir)
+    private static string? GetSkillsContainerPath(string hostRoot)
     {
-        var baseDirs = new[]
-        {
-            workspaceDir,
-            AppContext.BaseDirectory,
-            Path.GetDirectoryName(AppContext.BaseDirectory) ?? "."
-        };
-        foreach (var baseDir in baseDirs)
-        {
-            var skillsPath = Path.Combine(baseDir, "skills");
-            var skillsPathCapital = Path.Combine(baseDir, "Skills");
-            if (Directory.Exists(skillsPath))
-                yield return skillsPath;
-            else if (Directory.Exists(skillsPathCapital))
-                yield return skillsPathCapital;
-        }
+        var skillsPath = Path.Combine(hostRoot, "skills");
+        var skillsPathCapital = Path.Combine(hostRoot, "Skills");
+        if (Directory.Exists(skillsPath))
+            return skillsPath;
+        if (Directory.Exists(skillsPathCapital))
+            return skillsPathCapital;
+        return null;
     }
 
     /// <summary>
-    /// Scan workspace for skills. Looks for skills/*/SKILL.md and workspace/skills/*/SKILL.md.
+    /// Scan the host bundle for skills. Does not use the user workspace.
     /// </summary>
-    public static IReadOnlyList<SkillEntry> Load(string workspaceDir, int maxSkills = 50)
+    public static IReadOnlyList<SkillEntry> Load(string hostRoot, int maxSkills = 50)
     {
         var results = new List<SkillEntry>();
-        var dirs = EnumerateSkillRoots(workspaceDir).ToList();
+        var container = GetSkillsContainerPath(hostRoot);
+        if (container is null)
+            return results;
 
-        // Use effective skill name (frontmatter name if present, otherwise folder name)
-        // as the unique key, and define a clear precedence:
-        //   workspace/skills  >  AppContext.BaseDirectory/skills  >  parent-of-AppContext/skills
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var dir in dirs)
+        foreach (var sub in Directory.GetDirectories(container))
         {
-            if (!Directory.Exists(dir) || results.Count >= maxSkills)
+            if (results.Count >= maxSkills)
+                break;
+
+            var skillPath = Path.Combine(sub, "SKILL.md");
+            if (!File.Exists(skillPath))
                 continue;
 
-            foreach (var sub in Directory.GetDirectories(dir))
-            {
-                var skillPath = Path.Combine(sub, "SKILL.md");
-                if (!File.Exists(skillPath))
-                    continue;
+            var (desc, parsedName) = ParseFrontmatter(skillPath);
+            var folderName = Path.GetFileName(sub);
+            var skillName = !string.IsNullOrWhiteSpace(parsedName) ? parsedName : folderName;
 
-                var (desc, parsedName) = ParseFrontmatter(skillPath);
-                var folderName = Path.GetFileName(sub);
-                var skillName = !string.IsNullOrWhiteSpace(parsedName) ? parsedName : folderName;
+            if (seen.Contains(skillName))
+                continue;
 
-                // If a skill with the same effective name has already been loaded from a
-                // higher‑priority root, skip this one.
-                if (seen.Contains(skillName))
-                    continue;
-
-                seen.Add(skillName);
-                results.Add(new SkillEntry(skillName, desc, skillPath));
-
-                if (results.Count >= maxSkills)
-                    break;
-            }
+            seen.Add(skillName);
+            results.Add(new SkillEntry(skillName, desc, skillPath));
         }
 
         return results;
@@ -82,7 +65,7 @@ public static class SkillLoader
     /// Aligns with OpenLum TS: inject metadata only; model loads SKILL.md via a path-capable tool when a skill is actually needed.
     /// Paths are compacted (home → ~) to save tokens.
     /// </summary>
-    public static string FormatForPrompt(IReadOnlyList<SkillEntry> skills, string workspaceDir)
+    public static string FormatForPrompt(IReadOnlyList<SkillEntry> skills)
     {
         if (skills.Count == 0)
             return string.Empty;
@@ -101,10 +84,19 @@ public static class SkillLoader
         sb.AppendLine("</available_skills>");
         sb.AppendLine();
         sb.AppendLine(
-            "Load a skill's SKILL.md from the listed path **only when the user's task actually requires that skill**."
+            "**Mandatory read**: If the task **matches** any skill above (by name, description, or the domain of the work), you **must** `read` that skill's SKILL.md at the listed `<location>` **before** following skill-specific workflows, running skill-shipped executables, or relying on rules documented only in that file. Load it as soon as you recognize the match—any turn, including right after discovery—do not defer or skip."
         );
         sb.AppendLine(
-            "Do **not** open SKILL.md or browse this catalog solely to access arbitrary user-supplied files — use the path/file tools from the **Tools** section, following each tool's description."
+            "**Later phases**: If relevance to a skill appears only after earlier steps (observe, build failure, user direction, scope change), you **must** `read` that SKILL.md **before** continuing skill-specific work in that phase. Do not rely on the short catalog here or on prior turns alone—pull the document when the skill becomes applicable."
+        );
+        sb.AppendLine(
+            "**Skill as dynamic contract**: Phase-specific steps, commands, checks, and constraints belong in each SKILL.md; this section only lists skills. When a skill applies, treat its SKILL.md as the authoritative, step-by-step contract—not something to replace with generic system prompt habits."
+        );
+        sb.AppendLine(
+            "**Tools without skills**: Work that **only** needs built-in **Tools** and does **not** depend on a listed skill's documented workflow does **not** require reading a skill—follow each tool's description."
+        );
+        sb.AppendLine(
+            "Do **not** open SKILL.md or browse this catalog solely to access arbitrary user-supplied project files — use the path/file tools from **Tools**, following each tool's description."
         );
         sb.AppendLine(
             "Before running any executable shipped with a skill, read that skill's SKILL.md for the exact command and paths; do not infer binary names from skill titles."
@@ -129,14 +121,12 @@ public static class SkillLoader
     }
 
     /// <summary>
-    /// Returns the directory roots used for skill discovery (for ReadTool to allow reading SKILL.md).
-    /// Uses same enumeration as Load so both "skills" and "Skills" are found on case-sensitive FS.
+    /// Returns the skills container path under <paramref name="hostRoot"/> if present (for ReadTool allowlists).
     /// </summary>
-    public static IReadOnlyList<string> GetSkillRoots(string workspaceDir)
+    public static IReadOnlyList<string> GetSkillRoots(string hostRoot)
     {
-        return EnumerateSkillRoots(workspaceDir)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var c = GetSkillsContainerPath(hostRoot);
+        return c is null ? Array.Empty<string>() : [c];
     }
 
     private static (string Description, string Name) ParseFrontmatter(string path)

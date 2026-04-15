@@ -42,7 +42,7 @@ public sealed class ConsoleSession : ICompactableSession
 
     public void Clear() => _messages.Clear();
 
-    /// <summary>Replace entire history (e.g. resume from .openlum file).</summary>
+    /// <summary>Replace entire history (resume or full reset).</summary>
     public void ReplaceAllMessages(IReadOnlyList<ChatMessage> messages)
     {
         _messages.Clear();

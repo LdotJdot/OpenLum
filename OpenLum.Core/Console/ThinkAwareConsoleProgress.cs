@@ -13,10 +13,10 @@ public sealed class ThinkAwareConsoleProgress : IProgress<string>
     private const string CloseTagShort = "</think>";
     private const string OpenTagLong = "<thinking>";
     private const string CloseTagLong = "</thinking>";
-    private const int OpenTagShortLen = 7;   // "<think>".Length
-    private const int CloseTagShortLen = 8;  // "</think>".Length
-    private const int OpenTagLongLen = 10;   // "<thinking>".Length
-    private const int CloseTagLongLen = 11;  // "</thinking>".Length
+    private const int OpenTagShortLen = 7; // "<think>".Length
+    private const int CloseTagShortLen = 8; // "</think>".Length
+    private const int OpenTagLongLen = 10; // "<thinking>".Length
+    private const int CloseTagLongLen = 11; // "</thinking>".Length
 
     private readonly object _consoleLock;
     private readonly StringBuilder _buffer = new();
@@ -30,7 +30,8 @@ public sealed class ThinkAwareConsoleProgress : IProgress<string>
 
     public void Report(string value)
     {
-        if (string.IsNullOrEmpty(value)) return;
+        if (string.IsNullOrEmpty(value))
+            return;
 
         lock (_consoleLock)
         {
@@ -45,7 +46,11 @@ public sealed class ThinkAwareConsoleProgress : IProgress<string>
         {
             if (_insideThink)
             {
-                var (closeIdx, closeLen) = IndexOfAnyCaseInsensitive(_buffer, CloseTagShort, CloseTagLong);
+                var (closeIdx, closeLen) = IndexOfAnyCaseInsensitive(
+                    _buffer,
+                    CloseTagShort,
+                    CloseTagLong
+                );
                 if (closeIdx >= 0)
                 {
                     // Content before </think>
@@ -67,7 +72,11 @@ public sealed class ThinkAwareConsoleProgress : IProgress<string>
             }
             else
             {
-                var (openIdx, openLen) = IndexOfAnyCaseInsensitive(_buffer, OpenTagShort, OpenTagLong);
+                var (openIdx, openLen) = IndexOfAnyCaseInsensitive(
+                    _buffer,
+                    OpenTagShort,
+                    OpenTagLong
+                );
                 if (openIdx >= 0)
                 {
                     WriteNormal(_buffer.ToString(0, openIdx));
@@ -93,7 +102,8 @@ public sealed class ThinkAwareConsoleProgress : IProgress<string>
     {
         lock (_consoleLock)
         {
-            if (_buffer.Length == 0) return;
+            if (_buffer.Length == 0)
+                return;
             if (_insideThink)
             {
                 // 流结束时还有未刷新的思考内容，一并输出并收尾颜色。
@@ -143,14 +153,19 @@ public sealed class ThinkAwareConsoleProgress : IProgress<string>
         System.Console.Write(s);
     }
 
-    private static (int Index, int Length) IndexOfAnyCaseInsensitive(StringBuilder sb, string value1, string value2)
+    private static (int Index, int Length) IndexOfAnyCaseInsensitive(
+        StringBuilder sb,
+        string value1,
+        string value2
+    )
     {
         int bestIndex = -1;
         int bestLen = 0;
 
         void TryMatch(string v)
         {
-            if (v.Length == 0 || sb.Length < v.Length) return;
+            if (v.Length == 0 || sb.Length < v.Length)
+                return;
             for (int i = 0; i <= sb.Length - v.Length; i++)
             {
                 bool match = true;

@@ -18,6 +18,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Host bundle (same layout as OpenLum.Core output): skills + InternalTools next to openlum-console.exe -->
+    <None Include="..\OpenLum.Core\Skills\**\*">
+      <Link>Skills\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\OpenLum.Core\InternalTools\**\*">
+      <Link>InternalTools\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
     <None Update="openlum.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

@@ -17,9 +17,9 @@ public sealed class TodoTool : ITool
 
     public string Description =>
         "Create or update a structured TODO list for tracking multi-step tasks. " +
-        "Each item has id, content, status (pending/in_progress/completed/cancelled). " +
-        "Set merge=true to update specific items by id; merge=false to replace the entire list. " +
-        "When the workflow gates writes, adding TODOs in Observe can unlock Act (same role as submit_plan).";
+        "Each item has id, content, status (pending|in_progress|completed|cancelled; common aliases like done→completed are accepted). " +
+        "merge=true: upsert by id; merge=false: replace the whole list. " +
+        "When workflow gates writes, TODOs in Observe unlock Act (same role as submit_plan).";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

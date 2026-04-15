@@ -32,11 +32,13 @@ public sealed class AgentLoop : IAgent
     private readonly int _maxToolTurns;
     private readonly bool _useModelDecideAtLimit;
     private readonly SessionRunLogger? _runLogger;
-    /// <summary>Flush streamed assistant text to console before tool status lines (e.g. ThinkAwareConsoleProgress.FlushRemaining).</summary>
+    /// <summary>Flush streamed assistant text to console before tool status lines.</summary>
     private readonly Action? _flushAssistantStreamBeforeTools;
 
     private enum WorkflowPhase
     {
+        /// <summary>No tools: first response after user message when heuristic says the task needs up-front thinking.</summary>
+        InstructionPrep,
         Observe,
         ActPrep,
         Act,
@@ -117,7 +119,7 @@ public sealed class AgentLoop : IAgent
         IProgress<string>? contentProgress,
         CancellationToken ct = default)
     {
-        ResetWorkflowForNewUserMessage();
+        ResetWorkflowForNewUserMessage(userPrompt);
         _session.Add(new ChatMessage { Role = MessageRole.User, Content = WrapUserInstruction(userPrompt) });
         _runLogger?.WriteUserMessage(WrapUserInstruction(userPrompt));
 
@@ -160,6 +162,12 @@ public sealed class AgentLoop : IAgent
             if (response.ToolCalls.Count == 0)
             {
                 _session.AddAssistant(response.Content, null);
+                if (_workflow.Enabled && _phase == WorkflowPhase.InstructionPrep)
+                {
+                    _phase = _workflow.RequirePlanForWrite ? WorkflowPhase.Observe : WorkflowPhase.Act;
+                    continue;
+                }
+
                 if (_workflow.Enabled && _phase == WorkflowPhase.ActPrep)
                 {
                     _phase = WorkflowPhase.Act;
@@ -313,12 +321,18 @@ public sealed class AgentLoop : IAgent
             sys += "\n\n[Workflow] ";
             sys += _phase switch
             {
+                WorkflowPhase.InstructionPrep =>
+                    "Phase=INSTRUCTION_PREP (one round only, no tools). Right after the user's message: output <thinking>...</thinking> first. " +
+                    "Scale depth to perceived difficulty — short vague asks: brief restatement + clarifying questions; long multi-step, ambiguous, or iterative work: longer (goals, assumptions, risks, what to verify). " +
+                    "Do not call any tools this turn (not read, not exec, not write/str_replace/text_edit); the next turn unlocks Observe or Act.",
                 WorkflowPhase.Observe =>
                     BuildObservePhaseMessage(),
                 WorkflowPhase.ActPrep =>
-                    "Phase=ACT_PREP (one round only, no tools). Output a <thinking>...</thinking> block (short or long): what you will do in Act, risks, and file/command scope. " +
-                    "Do not call tools this turn; the next turn will unlock Act.",
-                WorkflowPhase.Act => "Phase=ACT. You may edit files (prefer str_replace for small precise edits) and use exec when appropriate.",
+                    "Phase=ACT_PREP (one round only, no tools). You MUST output <thinking>...</thinking> first. " +
+                    "Scale length to difficulty: trivial/single small edit — brief (a few sentences); multi-file, architecture, security, or ambiguous scope — longer: goal restatement, risks, files/commands in order, verification plan. " +
+                    "Do not call tools this turn (write/str_replace/text_edit/read/exec are all blocked here); the next turn unlocks Act.",
+                WorkflowPhase.Act =>
+                    "Phase=ACT. You may edit files. For str_replace/text_edit, re-read the target first so arguments match the file literally (real < > &, not escape spellings). Prefer str_replace for small unique snippets; use text_edit read_range → replace_range for long blocks. Exec when appropriate.",
                 WorkflowPhase.Verify => "Phase=VERIFY. Re-check with read/grep/glob; use exec for build/tests/skills; avoid further edits unless necessary.",
                 _ => "Phase=ACT."
             };
@@ -428,12 +442,29 @@ public sealed class AgentLoop : IAgent
         {
             if (!IsToolAllowedInCurrentPhase(tc.Name))
             {
+                var hint = _phase switch
+                {
+                    WorkflowPhase.InstructionPrep =>
+                        "Phase INSTRUCTION_PREP: no tools—output <thinking> about the user's request only; next turn unlocks Observe/Act.",
+                    WorkflowPhase.ActPrep =>
+                        "Phase ACT_PREP: no tools this round—output <thinking>...</thinking> only, then the next turn unlocks Act. " +
+                        "Do not batch other tools with submit_plan/todo in the same assistant message; submit the plan alone, complete ACT_PREP, then continue.",
+                    WorkflowPhase.Verify =>
+                        "Phase VERIFY: only read/search-style tools and exec (as configured)—not write/str_replace/text_edit. " +
+                        "If more edits are required, say so in the reply; do not repeat blocked edit tools this phase.",
+                    WorkflowPhase.Observe when IsWriteLikeTool(tc.Name) =>
+                        "OBSERVE does not expose write/str_replace/text_edit. Use submit_plan or todo here, then one ACT_PREP round (thinking only), then ACT will include those tools. " +
+                        "Do not repeat the same denied edit tool in this phase.",
+                    WorkflowPhase.Observe =>
+                        "In Observe, use read/search/list and planning tools; exec may be allowed without a plan when the host enables it. " +
+                        "This tool name is not in the Observe allowlist—pick an allowed tool or unlock Act via submit_plan/todo when edits are needed.",
+                    _ =>
+                        "This tool is not allowed in the current workflow phase; follow the latest [Workflow] line and switch strategy instead of retrying the same call."
+                };
                 res = new ToolResult
                 {
                     ToolCallId = tc.Id,
-                    Content = $"Error: tool '{tc.Name}' is not allowed in workflow phase '{_phase}'. " +
-                              "In Observe, use read/search tools; exec may be allowed without a plan when the host enables it; " +
-                              "file edits need a plan or TODOs before Act when plan-gating is on.",
+                    Content = $"Error: tool '{tc.Name}' is not allowed in workflow phase '{_phase}'. {hint}",
                     IsError = true
                 };
                 logBody = res.Content;
@@ -514,20 +545,35 @@ public sealed class AgentLoop : IAgent
                     _phase = WorkflowPhase.Verify;
                 }
             }
+
+            // Unlock ActPrep immediately after plan/TODOs land so batched tools in the same response do not skip thinking.
+            if (_workflow.Enabled && _phase == WorkflowPhase.Observe && res is { IsError: false }
+                && (string.Equals(tc.Name, "submit_plan", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(tc.Name, "todo", StringComparison.OrdinalIgnoreCase)))
+            {
+                MaybePromoteObserveToAct();
+            }
         }
     }
 
-    private void ResetWorkflowForNewUserMessage()
+    private void ResetWorkflowForNewUserMessage(string userPrompt)
     {
+        _planStore?.Clear();
+
         if (!_workflow.Enabled)
         {
             _phase = WorkflowPhase.Act;
             return;
         }
 
+        if (InstructionThinkingHeuristic.ShouldRun(userPrompt, _workflow))
+        {
+            _phase = WorkflowPhase.InstructionPrep;
+            return;
+        }
+
         // If gating is off, start directly in Act.
         _phase = _workflow.RequirePlanForWrite ? WorkflowPhase.Observe : WorkflowPhase.Act;
-        _planStore?.Clear();
     }
 
     private string BuildObservePhaseMessage()
@@ -538,9 +584,14 @@ public sealed class AgentLoop : IAgent
             ? "Exec is allowed here for one-off commands without a prior plan. "
             : "No exec until Act. ";
         var writes =
-            "Writes (write/str_replace/text_edit) need Act when plan-gating is on—submit a short plan or TODOs first. ";
+            "You cannot use write/str_replace/text_edit in this phase (they are not in your tool list here). When plan-gating is on, call submit_plan or todo once, complete ACT_PREP (one thinking-only reply), then ACT unlocks edits. ";
         return core + execLine + writes;
     }
+
+    private static bool IsWriteLikeTool(string name) =>
+        name.Equals("write", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("str_replace", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("text_edit", StringComparison.OrdinalIgnoreCase);
 
     private void MaybePromoteObserveToAct()
     {
@@ -554,8 +605,9 @@ public sealed class AgentLoop : IAgent
 
         var hasPlan = _planStore is { HasPlan: true };
         var hasTodos = _todoStore is { HasItems: true };
+        // Always one ActPrep round (no tools, <thinking>) after plan/TODOs unlock Act — depth scales with task (see phase message).
         if (hasPlan || hasTodos)
-            _phase = _workflow.RequireThinkingBeforeAct ? WorkflowPhase.ActPrep : WorkflowPhase.Act;
+            _phase = WorkflowPhase.ActPrep;
     }
 
     private IToolRegistry GetToolsForCurrentPhase()
@@ -565,6 +617,7 @@ public sealed class AgentLoop : IAgent
         // Minimal per-phase allowlist, intersected with base tool policy.
         var allow = _phase switch
         {
+            WorkflowPhase.InstructionPrep => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             WorkflowPhase.Observe => BuildObservePhaseAllowlist(),
             WorkflowPhase.ActPrep => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             WorkflowPhase.Verify => new HashSet<string>(StringComparer.OrdinalIgnoreCase)

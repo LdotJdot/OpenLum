@@ -52,17 +52,21 @@ public static class PlainTextLineEditor
     public static void ReplaceAll(string fullPath, string oldText, string newText)
     {
         var content = File.ReadAllText(fullPath);
-        content = content.Replace(oldText, newText, StringComparison.Ordinal);
+        var effective = TextMatchHelpers.ResolveOldString(content, oldText);
+        if (effective is null)
+            throw new InvalidOperationException("old_text not found.");
+        content = content.Replace(effective, newText, StringComparison.Ordinal);
         File.WriteAllText(fullPath, content, new UTF8Encoding(false));
     }
 
     public static void ReplaceFirst(string fullPath, string oldText, string newText)
     {
         var content = File.ReadAllText(fullPath);
-        var idx = content.IndexOf(oldText, StringComparison.Ordinal);
-        if (idx < 0)
+        var effective = TextMatchHelpers.ResolveOldString(content, oldText);
+        if (effective is null)
             throw new InvalidOperationException("old_text not found.");
-        content = content.Substring(0, idx) + newText + content[(idx + oldText.Length)..];
+        var idx = content.IndexOf(effective, StringComparison.Ordinal);
+        content = content.Substring(0, idx) + newText + content[(idx + effective.Length)..];
         File.WriteAllText(fullPath, content, new UTF8Encoding(false));
     }
 

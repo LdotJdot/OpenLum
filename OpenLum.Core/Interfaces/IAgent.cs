@@ -6,7 +6,7 @@ namespace OpenLum.Console.Interfaces;
 /// <param name="Success">Whether the turn completed successfully.</param>
 /// <param name="ErrorMessage">Error message when not successful.</param>
 /// <param name="NeedsUserConfirmation">When true, REPL should show ConfirmMessage and prompt user to continue or stop.</param>
-/// <param name="ConfirmMessage">Message to show when NeedsUserConfirmation is true (e.g. "已执行较多轮工具调用，是否继续？").</param>
+/// <param name="ConfirmMessage">Message to show when NeedsUserConfirmation is true.</param>
 public sealed record AgentTurnResult(
     bool Success,
     string? ErrorMessage,

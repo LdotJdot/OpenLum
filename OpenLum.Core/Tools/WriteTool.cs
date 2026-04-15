@@ -17,8 +17,9 @@ public sealed class WriteTool : ITool
     public string Name => "write";
 
     public string Description =>
-        "Create or overwrite a file. Use for new files or full rewrites. " +
-        "For small edits to existing files, prefer str_replace instead.";
+        "Create or overwrite a file with the full `content`. Use for new files or deliberate full rewrites. " +
+        "For partial edits to existing files, prefer str_replace or text_edit (replace_range) to avoid accidental full-file mistakes. " +
+        "Parent directories are created if missing.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [
@@ -45,7 +46,16 @@ public sealed class WriteTool : ITool
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
             File.WriteAllText(fullPath, content);
-            return Task.FromResult($"Wrote {pathArg} ({content.Length} chars).");
+            var lines = 1;
+            foreach (var c in content)
+            {
+                if (c == '\n') lines++;
+            }
+
+            return Task.FromResult(
+                content.Length == 0
+                    ? $"Wrote empty file {pathArg}."
+                    : $"Wrote {pathArg} ({content.Length} chars, ~{lines} lines).");
         }
         catch (Exception ex)
         {

@@ -29,7 +29,7 @@ public sealed class PlanStore
         lock (_lock) _plan = null;
     }
 
-    /// <summary>Current plan body for host UI (e.g. console echo after submit_plan).</summary>
+    /// <summary>Current plan body for host UI.</summary>
     public string GetCurrentPlanText()
     {
         lock (_lock)

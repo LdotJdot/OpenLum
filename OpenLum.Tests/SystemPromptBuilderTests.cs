@@ -37,7 +37,7 @@ public class SystemPromptBuilderTests
     public void Build_IncludesEfficiencySection_WithSpawnBullet()
     {
         var r = new DummyRegistry("grep", "read", "list_dir", "sessions_spawn");
-        var p = SystemPromptBuilder.Build(Path.GetTempPath(), r);
+        var p = SystemPromptBuilder.Build(Path.GetTempPath(), Path.GetTempPath(), r);
         Assert.Contains("## Efficiency", p, StringComparison.Ordinal);
         Assert.Contains("Principles only", p, StringComparison.Ordinal);
         Assert.Contains("one assistant turn", p, StringComparison.OrdinalIgnoreCase);
@@ -48,7 +48,7 @@ public class SystemPromptBuilderTests
     public void Build_OmitsSpawnEfficiencyBulletWhenToolMissing()
     {
         var r = new DummyRegistry("grep", "read");
-        var p = SystemPromptBuilder.Build(Path.GetTempPath(), r);
+        var p = SystemPromptBuilder.Build(Path.GetTempPath(), Path.GetTempPath(), r);
         Assert.Contains("## Efficiency", p, StringComparison.Ordinal);
         Assert.DoesNotContain("Delegation / sub-session", p, StringComparison.Ordinal);
     }

@@ -20,9 +20,11 @@ public sealed class SubmitPlanTool : ITool
     public string Name => "submit_plan";
 
     public string Description =>
-        "Submit or update a lightweight plan artifact for multi-step tasks. " +
-        "When the workflow gates **file edits**, call this (or create TODOs) in Observe to unlock Act for write/str_replace/text_edit. " +
-        "Exec for one-off commands is often available in Observe without this (see host workflow); do not submit a plan solely to run a quick command.";
+        "Submit or update a short, actionable plan (steps, files, risks). " +
+        "When workflow gates **file edits**, call this or **todo** in Observe to unlock Act for write/str_replace/text_edit. " +
+        "Prefer calling **submit_plan alone** in that assistant turn (no other tool_calls in the same message) so the host can run ACT_PREP (thinking-only) next; if you batch more tools after submit_plan in the same message, those calls will error until ACT_PREP finishes. " +
+        "append=true concatenates to the current plan. " +
+        "Do not submit a plan only to run a quick exec—Observe often allows exec without a plan (see host workflow).";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

@@ -22,7 +22,8 @@ public sealed class TextEditTool : ITool
         "Plain-text / source file edits by line number (1-based) or whole-file literal/regex replace. " +
         "UTF-8 only; not for Office/PDF/binary. " +
         "Operations: read_range, replace_range, replace_all, replace_first, replace_all_regex, insert_lines, delete_range, append_lines. " +
-        "Prefer str_replace when replacing a unique old_string; use text_edit for line-range or insert/delete.";
+        "Prefer str_replace for small unique snippets; for long blocks use read_range to get line numbers then replace_range (avoids giant old_string). " +
+        "replace_first/replace_all share the same LF/CRLF tolerance as str_replace when matching old_string.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [

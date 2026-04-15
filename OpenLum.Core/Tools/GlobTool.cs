@@ -34,11 +34,11 @@ public sealed class GlobTool : ITool
         "The host console may show a one-line status like \"Searched files …\" (summary only; full paths are in the tool result). " +
         "Path defaults to workspace root; absolute paths are accepted. " +
         "Patterns not starting with \"**/\" are auto-prepended for recursive matching. " +
-        "Prefer simple extension patterns (e.g. \"*.md\") for broad discovery.";
+        "Prefer simple extension-based patterns for broad discovery.";
 
     public IReadOnlyList<ToolParameter> Parameters =>
     [
-        new ToolParameter("pattern", "string", "Glob pattern (e.g. \"*.cs\", \"**/test_*.py\", \"src/**/*.ts\").", true),
+        new ToolParameter("pattern", "string", "Glob pattern; supports ** and common wildcards.", true),
         new ToolParameter("path", "string", "Directory to search (default: workspace root).", false),
         new ToolParameter("head_limit", "number", "Max results (default 50, max 200).", false)
     ];
@@ -90,7 +90,8 @@ public sealed class GlobTool : ITool
         }
 
         if (matches.Count == 0)
-            return Task.FromResult("No files matched the pattern.");
+            return Task.FromResult(
+                "No files matched. Try a broader pattern, a smaller **path** scope, or fix typos.");
 
         matches.Sort((a, b) => b.ModTime.CompareTo(a.ModTime));
 

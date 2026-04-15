@@ -16,7 +16,10 @@ public sealed class MemoryGetTool : ITool
     }
 
     public string Name => "memory_get";
-    public string Description => "Read a snippet from MEMORY.md or memory/*.md. Use path like 'MEMORY.md' or 'memory/notes.md'. Optional from/lines for line range.";
+    public string Description =>
+        "Read a snippet from MEMORY.md or memory/*.md (workspace-relative). Paths: MEMORY.md or memory/*.md only. " +
+        "Optional from (1-based start line) and lines (count); omit lines to read from `from` through EOF. " +
+        "Returns JSON with path/from/text. For keyword discovery across memory files, use memory_search.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("path", "string", "Relative path: MEMORY.md or memory/*.md", true),

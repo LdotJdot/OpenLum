@@ -16,7 +16,10 @@ public sealed class MemorySearchTool : ITool
     }
 
     public string Name => "memory_search";
-    public string Description => "Search MEMORY.md and memory/*.md for matching content. Before answering about prior work, decisions, or preferences, search memory first.";
+    public string Description =>
+        "Search MEMORY.md and memory/*.md for lines containing ALL space-separated query terms (case-insensitive). " +
+        "Returns JSON {results:[{path,startLine,endLine,snippet},...]}. If results is empty, no memory files matched or terms were too strict. " +
+        "Before answering about prior work, decisions, or preferences, search memory first.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("query", "string", "Search query (keyword match)", true),
