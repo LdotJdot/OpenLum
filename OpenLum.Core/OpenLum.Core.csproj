@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OpenLum.Tests" />
     <!-- None (not Content) so .exe/.dll under Skills/InternalTools are copied -->
     <None Include="Skills\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

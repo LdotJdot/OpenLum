@@ -1,5 +1,6 @@
 using System.Text.Json;
 using OpenLum.Console.Extractors;
+using OpenLum.Console.Tools;
 
 namespace OpenLum.Console.Console;
 
@@ -253,7 +254,7 @@ public static class ToolActivityFormatter
     private static int GetInt(JsonElement el, string name, int defaultVal)
     {
         if (!el.TryGetProperty(name, out var p)) return defaultVal;
-        return p.TryGetInt32(out var i) ? i : defaultVal;
+        return ToolArgHelpers.TryParseJsonElementInt(p, out var i) ? i : defaultVal;
     }
 
     private static string Truncate(string? s, int max)

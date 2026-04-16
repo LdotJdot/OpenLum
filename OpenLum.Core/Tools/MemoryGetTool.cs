@@ -1,5 +1,6 @@
 using System.Text;
 using OpenLum.Console.Interfaces;
+using static OpenLum.Console.Tools.ToolArgHelpers;
 
 namespace OpenLum.Console.Tools;
 
@@ -37,8 +38,8 @@ public sealed class MemoryGetTool : ITool
         if (fullPath is null || !File.Exists(fullPath))
             return Task.FromResult($"Error: memory file not found: {path}");
 
-        var from = ReadInt(args, "from", 1);
-        var lines = ReadInt(args, "lines", 0);
+        var from = ParseInt(args, "from", 1);
+        var lines = ParseInt(args, "lines", 0);
         if (from < 1) from = 1;
         if (lines < 0) lines = 0;
 
@@ -96,16 +97,4 @@ public sealed class MemoryGetTool : ITool
         return full;
     }
 
-    private static int ReadInt(IReadOnlyDictionary<string, object?> args, string key, int fallback)
-    {
-        if (!args.TryGetValue(key, out var v))
-            return fallback;
-        return v switch
-        {
-            System.Text.Json.JsonElement je when je.TryGetInt32(out var i) => i,
-            long l => (int)l,
-            int i => i,
-            _ => fallback
-        };
-    }
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using OpenLum.Console.Interfaces;
+using static OpenLum.Console.Tools.ToolArgHelpers;
 
 namespace OpenLum.Console.Tools;
 
@@ -11,32 +12,33 @@ public sealed class ExecTool : ITool
 {
     private readonly string _workspaceDir;
     private readonly int _defaultTimeoutSeconds;
+    private readonly object _cwdLock = new();
+    private string _currentWorkingDir;
 
     /// <summary>Default 120s — browser skills (openlum-browser) cold-start + navigate often exceed 60s.</summary>
     public ExecTool(string workspaceDir, int defaultTimeoutSeconds = 120)
     {
         _workspaceDir = Path.GetFullPath(workspaceDir);
         _defaultTimeoutSeconds = defaultTimeoutSeconds;
+        _currentWorkingDir = _workspaceDir;
     }
 
     public string Name => "exec";
     public string Description =>
-        "Run a PowerShell command. Default working directory is the workspace. " +
-        "Prefer absolute paths; workspace-relative paths are accepted. " +
-        "**Windows / OpenLum host: PowerShell only.** Frequent errors to avoid: (1) **Never use `&&`** to chain commands (bash habit)—PowerShell does not support it the same way; **always use `;`**: e.g. `Set-Location -LiteralPath 'D:\\...\\proj'; dotnet build` or `cd '...'; ./tool.exe`. (2) Put **cd + action in one `exec` string** with `;`, not two separate execs unless the first failed for a clear reason. " +
-        "(3) Paths with spaces: quote the path and prefer `Set-Location -LiteralPath '...'`. Do not use `cmd /c` or bash-only syntax. " +
-        "Stdout and stderr are captured **after the process exits** (not streamed live). Large output is truncated in the result. " +
-        "Programs that block on **Console.ReadKey()** or **ReadLine()** need **stdin** set: a single character for ReadKey, or a line (with newline) for ReadLine—otherwise stdin is not redirected and the process may wait until **timeoutSeconds** elapses. " +
-        "**timeoutSeconds: 0** means no automatic kill (only host cancellation); otherwise capped at 24h. Default 120s. " +
-        "Under phased workflow, exec is often available before any write plan when the host allows—use it for quick commands without extra planning rounds. " +
-        "Do not use exec to open or extract Word (.docx), PDF, Office, or other formats that the **read** tool handles via built-in extractors—use **read** instead. " +
-        "Do not use exec to redo what grep, glob, list_dir, read, or read_many already solve (recursive listing or text search). " +
-        "Typical uses: builds, tests, installs, and other commands the host profile allows. " +
-        "After native search tools report no matches on the user's scope, stop and answer—do not spawn long shell search loops.";
+        "Run a command in the host shell (PowerShell on Windows). Working directory defaults to the workspace. " +
+        "Rules: (1) use PowerShell syntax; chain statements with ';' (not '&&'); (2) include navigation + action in one call when needed; " +
+        "(3) quote paths with spaces and prefer Set-Location -LiteralPath. " +
+        "Tip: If you need a stable working directory across multiple exec calls, pass **workingDirectory** explicitly. " +
+        "Output: stdout/stderr captured after exit; large output may be truncated. " +
+        "Interactivity: if the program waits for Console.ReadKey/ReadLine, pass stdin (or increase timeout). " +
+        "Use exec for builds/tests/install/running CLIs; prefer grep/glob/list_dir/read for discovery and read for document extractors.";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("command", "string",
-            "Single PowerShell script line or chained script: use **semicolon `;`** between statements. **Do not use `&&`** (wrong for this host). Example: `Set-Location -LiteralPath 'C:\\path with spaces\\app'; dotnet run`.", true),
+            "PowerShell command/script. Use ';' between statements (never '&&'). Use one command string for navigation + action when needed.", true),
+        new ToolParameter("workingDirectory", "string",
+            "Optional working directory for this exec call (absolute or workspace-relative). When provided, it becomes the default for subsequent exec calls in this tool instance.",
+            false),
         new ToolParameter("timeoutSeconds", "number", "Seconds before the process is killed (default 120). Use 0 for no auto-timeout (still cancellable). Max 86400. openlum-browser uses at least 180 when applicable.", false),
         new ToolParameter("stdin", "string", "Sent to the child stdin when the program reads from Console (ReadLine/ReadKey). Required when the program waits for input. After writing, stdin is closed (EOF).", false)
     ];
@@ -47,18 +49,24 @@ public sealed class ExecTool : ITool
         if (string.IsNullOrWhiteSpace(command))
             return "Error: command is required.";
 
+        // Allow callers to pin the working directory explicitly (recommended for reliability).
+        if (args.TryGetValue("workingDirectory", out var wdVal) && wdVal is not null)
+        {
+            var wd = wdVal.ToString()?.Trim();
+            if (!string.IsNullOrWhiteSpace(wd))
+            {
+                var resolved = ResolveWorkingDir(wd);
+                if (!Directory.Exists(resolved))
+                    return $"Error: workingDirectory does not exist: {resolved}";
+                lock (_cwdLock) _currentWorkingDir = resolved;
+            }
+        }
+
         const int maxTimeoutSec = 86400; // 24h cap for explicit finite timeouts
         var useInfiniteTimeout = false;
         var timeoutSec = _defaultTimeoutSeconds;
-        if (args.TryGetValue("timeoutSeconds", out var v))
+        if (args.TryGetValue("timeoutSeconds", out var v) && TryParseIntObject(v, out var n))
         {
-            var n = v switch
-            {
-                System.Text.Json.JsonElement je when je.TryGetInt32(out var i) => i,
-                long l => (int)l,
-                int i => i,
-                _ => -1
-            };
             if (n == 0)
                 useInfiniteTimeout = true;
             else if (n > 0)
@@ -71,7 +79,8 @@ public sealed class ExecTool : ITool
 
         var stdinContent = args.GetValueOrDefault("stdin")?.ToString();
 
-        var workingDir = _workspaceDir;
+        string workingDir;
+        lock (_cwdLock) workingDir = _currentWorkingDir;
         if (TryResolveSkillExeWorkingDir(command, out var skillExeDir))
             workingDir = skillExeDir;
 
@@ -87,7 +96,10 @@ public sealed class ExecTool : ITool
             return $"Error: 随包 exe 不存在: {exePath}{suggestedRead}";
         }
 
-        var (fileName, argsStr) = GetShellInvoke(command);
+        // Keep the process-level WorkingDirectory stable. For PowerShell, also set location inside the script
+        // so relative paths resolve consistently even if the shell behavior differs across hosts.
+        var cmdWithLocation = WrapWithSetLocation(command, workingDir);
+        var (fileName, argsStr) = GetShellInvoke(cmdWithLocation);
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
@@ -190,6 +202,26 @@ public sealed class ExecTool : ITool
         {
             return $"Error: {ex.Message}";
         }
+    }
+
+    private string ResolveWorkingDir(string workingDirectory)
+    {
+        // "~" is not a Windows-native concept; treat it as workspace-relative for consistency.
+        if (workingDirectory == "~")
+            return _workspaceDir;
+
+        if (Path.IsPathRooted(workingDirectory))
+            return Path.GetFullPath(workingDirectory);
+
+        return Path.GetFullPath(Path.Combine(_workspaceDir, workingDirectory));
+    }
+
+    private static string WrapWithSetLocation(string command, string workingDir)
+    {
+        // Use -LiteralPath to avoid interpretation of special characters.
+        // Avoid embedding any examples; just enforce consistent path resolution.
+        var wdEsc = workingDir.Replace("'", "''");
+        return $"Set-Location -LiteralPath '{wdEsc}'; {command}";
     }
 
     private static async Task<string> SafeReadEnd(Task<string> task)

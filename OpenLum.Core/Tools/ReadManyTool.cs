@@ -146,9 +146,9 @@ public sealed class ReadManyTool : ITool
                 if (string.IsNullOrWhiteSpace(path)) continue;
 
                 var offset = defaultOffset;
-                if (elem.TryGetProperty("offset", out var o) && o.TryGetInt32(out var oi)) offset = oi;
+                if (elem.TryGetProperty("offset", out var o) && ToolArgHelpers.TryParseJsonElementInt(o, out var oi)) offset = oi;
                 var limit = defaultLimit;
-                if (elem.TryGetProperty("limit", out var l) && l.TryGetInt32(out var li)) limit = li;
+                if (elem.TryGetProperty("limit", out var l) && ToolArgHelpers.TryParseJsonElementInt(l, out var li)) limit = li;
                 limit = Math.Clamp(limit, 1, 2000);
 
                 list.Add(new ReadReq(path.Trim(), offset, limit));

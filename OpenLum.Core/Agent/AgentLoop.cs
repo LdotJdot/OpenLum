@@ -35,6 +35,9 @@ public sealed class AgentLoop : IAgent
     /// <summary>Flush streamed assistant text to console before tool status lines.</summary>
     private readonly Action? _flushAssistantStreamBeforeTools;
 
+    // Detect repeated, low-yield tool loops and inject a generic "reset" instruction.
+    private readonly StagnationDetector _stagnation = new();
+
     private enum WorkflowPhase
     {
         /// <summary>No tools: first response after user message when heuristic says the task needs up-front thinking.</summary>
@@ -120,6 +123,7 @@ public sealed class AgentLoop : IAgent
         CancellationToken ct = default)
     {
         ResetWorkflowForNewUserMessage(userPrompt);
+        _stagnation.Reset();
         _session.Add(new ChatMessage { Role = MessageRole.User, Content = WrapUserInstruction(userPrompt) });
         _runLogger?.WriteUserMessage(WrapUserInstruction(userPrompt));
 
@@ -189,6 +193,18 @@ public sealed class AgentLoop : IAgent
             _flushAssistantStreamBeforeTools?.Invoke();
             var results = await ExecuteToolCallsAsync(response.ToolCalls, ct);
             _session.AddToolResults(results);
+
+            // If we detect the assistant is stuck in a repetitive / low-signal loop, inject a generic reset.
+            // This must not mention specific tools or provide concrete examples that can bias the model.
+            if (_stagnation.Observe(response.ToolCalls, results))
+            {
+                _session.Add(new ChatMessage
+                {
+                    Role = MessageRole.User,
+                    Content = StagnationDetector.ResetInstruction
+                });
+                _runLogger?.WriteLine("stagnation_reset_injected: true");
+            }
         }
 
         _runLogger?.WriteLine("agent_run_finished: max_tool_turns_exceeded");
@@ -658,5 +674,136 @@ public sealed class AgentLoop : IAgent
             if (!_allowed.Contains(name)) return null;
             return _inner.Get(name);
         }
+    }
+
+    /// <summary>
+    /// Heuristic loop detector that is tool-agnostic: it looks for repeated actions and low-information outcomes,
+    /// then injects a generic "reset" instruction to force global re-anchoring and strategy change.
+    /// </summary>
+    private sealed class StagnationDetector
+    {
+        // Keep this instruction free of examples, tool names, and concrete strings that could bias the model.
+        public const string ResetInstruction =
+            "[System: 你可能已进入“重复但缺少新信息”的局面。请立刻停止沿用当前套路，先做一次全局重置（不要调用工具）：\n" +
+            "- 明确当前目标与完成标准（1–2句）。\n" +
+            "- 列出已被证据支持的事实（最多5条），并明确哪些是尚未验证的假设。\n" +
+            "- 检查执行上下文是否正确：你正在操作的工作区/路径范围/权限/当前阶段限制是否与目标一致（只写检查点，不要猜）。\n" +
+            "- 给出2–3个互斥的替代策略（每个一句，说明为何能带来“新信息”），选择其中一个继续。\n" +
+            "- 如果接下来两轮仍无法获得新信息，改为向用户提出一个具体澄清问题或请求用户提供关键证据（日志片段/命令输出/文件路径）。\n" +
+            "]";
+
+        private readonly Queue<Outcome> _window = new();
+        private readonly Dictionary<string, int> _repeatCounts = new(StringComparer.Ordinal);
+        private int _consecutiveLowSignal;
+        private int _consecutiveFailures;
+        private int _cooldownTurns;
+
+        // Tunables: intentionally conservative to avoid over-triggering.
+        private const int WindowSize = 12;
+        private const int RepeatSignatureThreshold = 3;      // same tool+args repeats this many times in window
+        private const int LowSignalStreakThreshold = 6;      // consecutive low-signal outcomes
+        private const int FailureStreakThreshold = 3;        // consecutive tool failures
+        private const int CooldownToolTurns = 4;             // after injection, don't inject again for a few tool turns
+
+        public void Reset()
+        {
+            _window.Clear();
+            _repeatCounts.Clear();
+            _consecutiveLowSignal = 0;
+            _consecutiveFailures = 0;
+            _cooldownTurns = 0;
+        }
+
+        public bool Observe(IReadOnlyList<ToolCall> calls, IReadOnlyList<ToolResult> results)
+        {
+            // Cooldown decreases once per tool batch.
+            if (_cooldownTurns > 0)
+            {
+                _cooldownTurns--;
+                // Still record outcomes for future, but do not trigger.
+            }
+
+            var triggered = false;
+            for (var i = 0; i < calls.Count && i < results.Count; i++)
+            {
+                var sig = Signature(calls[i]);
+                var outcome = Classify(results[i], sig);
+                Push(outcome);
+
+                if (outcome.IsFailure) _consecutiveFailures++;
+                else _consecutiveFailures = 0;
+
+                if (outcome.IsLowSignal) _consecutiveLowSignal++;
+                else _consecutiveLowSignal = 0;
+            }
+
+            if (_cooldownTurns > 0) return false;
+
+            var repeatsHit = _repeatCounts.Values.Any(v => v >= RepeatSignatureThreshold);
+            var lowSignalHit = _consecutiveLowSignal >= LowSignalStreakThreshold;
+            var failuresHit = _consecutiveFailures >= FailureStreakThreshold;
+
+            triggered = repeatsHit || lowSignalHit || failuresHit;
+            if (!triggered) return false;
+
+            _cooldownTurns = CooldownToolTurns;
+            // After triggering, clear repeat counts to reduce immediate re-triggering on the same window.
+            _repeatCounts.Clear();
+            _consecutiveLowSignal = 0;
+            _consecutiveFailures = 0;
+            return true;
+        }
+
+        private void Push(Outcome o)
+        {
+            _window.Enqueue(o);
+            _repeatCounts.TryGetValue(o.Signature, out var current);
+            _repeatCounts[o.Signature] = current + 1;
+
+            while (_window.Count > WindowSize)
+            {
+                var removed = _window.Dequeue();
+                if (_repeatCounts.TryGetValue(removed.Signature, out var c))
+                {
+                    c--;
+                    if (c <= 0) _repeatCounts.Remove(removed.Signature);
+                    else _repeatCounts[removed.Signature] = c;
+                }
+            }
+        }
+
+        private static string Signature(ToolCall tc)
+        {
+            // Normalize args: empty/whitespace treated as "{}" like ExecuteToolAsync does.
+            var args = string.IsNullOrWhiteSpace(tc.Arguments) ? "{}" : tc.Arguments.Trim();
+            // Keep signature stable but cheap; avoid hashing to keep it debuggable.
+            // This is internal; it won't be shown to the model.
+            return $"{tc.Name}\n{args}";
+        }
+
+        private static Outcome Classify(ToolResult res, string signature)
+        {
+            var content = (res.Content ?? "").Trim();
+
+            var isFailure = res.IsError
+                            || content.StartsWith("Error:", StringComparison.OrdinalIgnoreCase)
+                            || content.StartsWith("错误", StringComparison.Ordinal);
+
+            // "Low-signal" is intentionally broad and tool-agnostic: very short responses, explicit empties,
+            // or common “nothing found” shapes across tools. This is heuristic-only; no prompt mentions this.
+            var isLowSignal = false;
+            if (content.Length == 0) isLowSignal = true;
+            else if (content.Length < 40) isLowSignal = true;
+            else if (content.Contains("No matches found.", StringComparison.OrdinalIgnoreCase)) isLowSignal = true;
+            else if (content.Contains("File is empty.", StringComparison.OrdinalIgnoreCase)) isLowSignal = true;
+            else if (content.Equals("[]", StringComparison.Ordinal) || content.Equals("{}", StringComparison.Ordinal)) isLowSignal = true;
+
+            // Failures are also considered low-signal, since they typically don't advance the task.
+            if (isFailure) isLowSignal = true;
+
+            return new Outcome(signature, isFailure, isLowSignal);
+        }
+
+        private readonly record struct Outcome(string Signature, bool IsFailure, bool IsLowSignal);
     }
 }

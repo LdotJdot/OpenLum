@@ -15,6 +15,7 @@ description: "Local coding workflow: read/write/list_dir/exec，加上 Grep + Gl
 - 需要写 **临时 Python 脚本** 补充工具能力时：配合 `python` skill，在 `script/任务目录` 下组织脚本。
 - 只需做「查找 / 导航 / 定位代码位置」时：使用原生 **Grep** 与 **Glob**。
 - 需要**按行号或按内容做增量编辑**（ReplaceRangeWithText、ReplaceAll、InsertLines、DeleteRange 等）时：配合 `editing` skill，通过 exec 执行其提供的 PowerShell 片段。
+  - 说明：OpenLum 已提供 `text_edit` 与 `str_replace` 等编辑工具；优先用 `text_edit`（read_range → replace_range）做按行增量编辑，避免粘贴长脚本。
 
 ## When to Use
 
@@ -60,59 +61,27 @@ Success = compile passes. Non-C# stacks: do not run the app unless the user asks
 3. **搜索代码 / 文本（强烈推荐）** — 结合 `search` skill：  
    - 精确 / 正则查找：优先使用 **Grep** 工具（而不是 shell `rg`/`grep`）；  
    - 模糊定位：先用 **Glob** 缩小文件范围，再用 **Grep** 精确定位。  
-4. **write(path, content)** — Create or overwrite files.
-5. **exec(command)** — Run shell commands (build, git). Working dir is workspace.
-   - **直接使用 PowerShell 语法**：链式用 `;`，禁止 `&&`、`cmd /c`、bash 风格。含空格路径用 `& "path"`。
+4. **str_replace / text_edit** — Prefer partial edits to existing files. For long edits use `text_edit` read_range then replace_range.
+5. **write(path, content)** — Create or overwrite files (new files or deliberate full rewrites).
+6. **exec(command)** — Run shell commands (build, git). Working dir is workspace. Follow the exec tool description for PowerShell chaining/quoting.
 
-## 切块读取与增量编辑（exec + PowerShell / editing skill）
+## 按行切块读取与增量编辑（优先 text_edit）
 
-当前没有单独的「按行号读」「按片段替换」工具，可用 **exec** 执行 PowerShell 实现；更完整的编辑方法（ReadRange、ReplaceRangeWithText、ReplaceAll、InsertLines、DeleteRange、AppendLines 等）见 **editing** skill，均用 Shell 命令行实现，可直接在编程时复用。
+优先使用 `text_edit`：`read_range` 获取 1-based 行号与内容窗口，再用 `replace_range` 提交新内容。这样比粘贴长 PowerShell 脚本更稳定，也更不容易触发“脚本化输出”。仅当 `text_edit` 不适用（例如需要特殊 CLI 工具批处理）时，再考虑 `exec`。
 
-### 切块读取：只读第 S 行～第 E 行
+### 推荐顺序（最小化脚本化）
 
-Grep 得到行号后，用下面命令只读出该区间（避免 read 只读前 N 行、读不到后面）：
-
-```powershell
-$path = '.\src\Foo.cs'; $s = 101; $e = 150; (Get-Content $path)[$s-1..$e-1]
-```
-
-- `$path`：文件路径，工作区相对（如 `.\src\Foo.cs`）或绝对均可。
-- `$s`、`$e`：起始行、结束行（1-based）；PowerShell 数组 0-based，故用 `[$s-1..$e-1]`。
-- 输出即为该行范围内容，可直接用于后续修改决策。
-
-### 增量编辑（一）：按行号替换某一段
-
-只改第 S 行～第 E 行，其余行不动（整文件会重写，但逻辑上是“按段改”）：
-
-```powershell
-$path = '.\src\Foo.cs'; $s = 101; $e = 110
-$lines = Get-Content $path
-$new = @('        // 新代码行1', '        // 新代码行2')
-$lines[$s-1..$e-1] = $new
-$lines | Set-Content $path -Encoding UTF8
-```
-
-- `$new` 为要替换成的若干行；行数可与原段不同。
-- 含空格或特殊字符的路径给 `$path` 时用单引号；若路径在变量中，注意转义或引号。
-
-### 增量编辑（二）：按内容替换（-replace）
-
-已知要改的字符串或简单模式时，可直接整文件替换：
-
-```powershell
-$path = '.\src\Foo.cs'
-(Get-Content $path) -replace '旧片段', '新片段' | Set-Content $path -Encoding UTF8
-```
-
-- `-replace` 支持正则；若只替换字面串，注意转义正则特殊字符（如 `[`、`$`）。
-- 大文件时 exec 输出可能被截断，以是否报错和后续 build 为准。
+1. 用 **Grep/Glob** 定位文件与关键上下文。
+2. 用 `text_edit` 的 `read_range` 获取目标窗口（行号 + 文本）。
+3. 用 `text_edit` 的 `replace_range` 提交修改；小片段可用 `str_replace`。
+4. 用 `exec` 运行构建/测试做闭环验证。
 
 ### 使用顺序建议
 
 1. 用 **Grep** 定位到文件与行号。
-2. 用 **exec + 切块读取** 只读该行范围，确认上下文。
-3. 用 **exec + 按行号替换** 或 **-replace** 做局部修改。
-4. 必要时 **read** 或再 exec 切块读取核对，然后 **exec** 执行 build 做闭环检查。
+2. 用 `text_edit` 的 `read_range` 确认上下文。
+3. 用 `text_edit` 的 `replace_range`（或 `str_replace`）做局部修改。
+4. 必要时再 `read`/`text_edit read_range` 核对，然后 `exec` 执行 build 做闭环检查。
 
 ## Tips
 

@@ -1,5 +1,6 @@
 using System.Text;
 using OpenLum.Console.Interfaces;
+using static OpenLum.Console.Tools.ToolArgHelpers;
 
 namespace OpenLum.Console.Tools;
 
@@ -33,17 +34,8 @@ public sealed class MemorySearchTool : ITool
             return Task.FromResult("Error: query is required.");
 
         var maxResults = 10;
-        if (args.TryGetValue("maxResults", out var v))
-        {
-            var n = v switch
-            {
-                System.Text.Json.JsonElement je when je.TryGetInt32(out var i) => i,
-                long l => (int)l,
-                int i => i,
-                _ => 0
-            };
-            if (n > 0) maxResults = Math.Min(n, 50);
-        }
+        if (args.TryGetValue("maxResults", out var v) && TryParseIntObject(v, out var n) && n > 0)
+            maxResults = Math.Min(n, 50);
 
         var files = GetMemoryFiles();
         var sb = new StringBuilder();

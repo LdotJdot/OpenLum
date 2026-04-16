@@ -69,14 +69,12 @@ public sealed class SessionsSpawnTool : ITool
 
     public string Name => "sessions_spawn";
     public string Description =>
-        "Spawn a sub-agent for an isolated or long multi-step task; it uses the same workspace and tools as you. " +
-        "Do not use this for work you can do with read/list_dir/grep/glob here—call those directly. " +
-        "Returns the sub-agent's final reply; do not spawn again for the same delegated work. " +
-        "You may pass a single **task** string, or a **tasks** array to run multiple sub-agents in parallel and get a combined result. " +
-        "Use parallel tasks when you need to search/read/compare multiple files or areas at once. " +
-        "Safety: avoid having multiple sub-agents edit the **same file** concurrently; prefer sub-agents to gather evidence and propose edits, then apply edits deterministically in the parent (or partition by file). " +
-        "Delegation rule: sub-agent tasks should be **short and outcome-based** (goal + scope + required output). Avoid giving sub-agents long step-by-step shell scripts unless the user asked for exact commands. " +
-        "Template: \"Goal: <what>. Scope: <paths/constraints>. Output: <bullets/table/files+line numbers>.\"";
+        "Spawn one or more sub-agents in isolated sessions (same workspace/tools, fresh chat). " +
+        "Use this for parallel investigation or long multi-step work you want to isolate. " +
+        "Prefer doing simple read/search/list work directly in the parent. " +
+        "Input: either 'task' (single) or 'tasks' array (parallel). Output: the sub-agent(s) final reply, combined. " +
+        "Safety: avoid concurrent edits to the same file; default sub-agents to evidence + proposals, then apply edits deterministically in the parent. " +
+        "Delegation rule: keep tasks short and outcome-based: Goal + Scope + Output + WriteAllowed (default false).";
     public IReadOnlyList<ToolParameter> Parameters =>
     [
         new ToolParameter("task", "string", "The task for the sub-agent to complete", true),
@@ -492,6 +490,14 @@ public sealed class SessionsSpawnTool : ITool
             if (string.Equals(t.Name, "submit_plan", StringComparison.OrdinalIgnoreCase))
             {
                 filtered.Register(new SubmitPlanTool(planStore, _onPlanCommitted));
+                continue;
+            }
+
+            // Ensure sub-agents get an isolated exec state (cwd cache, timeouts, etc.).
+            // Parent and sub-agent should not share mutable exec state.
+            if (string.Equals(t.Name, "exec", StringComparison.OrdinalIgnoreCase))
+            {
+                filtered.Register(new ExecTool(_workspaceDir));
                 continue;
             }
 
